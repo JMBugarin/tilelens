@@ -64,8 +64,14 @@ def _worker_main(profile_path, words_path, jobs, results, generation, time_limit
         results.put(("fatal", str(exc)))
         return
     results.put(("ready", lexicon.version))
+    parent = mp.parent_process()
     while True:
-        job = jobs.get()
+        try:
+            job = jobs.get(timeout=1.0)
+        except queue.Empty:
+            if parent is not None and not parent.is_alive():
+                return
+            continue
         if job is None:
             return
         g, pid, rows, rack = job
