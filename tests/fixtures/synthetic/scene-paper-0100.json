@@ -1,0 +1,390 @@
+{
+ "theme": "paper",
+ "held_out": false,
+ "profile": "Demo Garden",
+ "cell": 40,
+ "scale": 1.0,
+ "board": [
+  [
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "B",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "A",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "T",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "K",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "I",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "D",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "B",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "E",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "D",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "O",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "R",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "E",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   {
+    "letter": "G",
+    "blank": false,
+    "state": "recent"
+   },
+   {
+    "letter": "O",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "T",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "H",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "I",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ]
+ ],
+ "rack": [
+  {
+   "letter": "Z",
+   "blank": false
+  },
+  {
+   "letter": "J",
+   "blank": false
+  },
+  {
+   "letter": "R",
+   "blank": false
+  },
+  {
+   "letter": "N",
+   "blank": false
+  },
+  {
+   "letter": "I",
+   "blank": false
+  },
+  {
+   "letter": "S",
+   "blank": false
+  },
+  {
+   "letter": "R",
+   "blank": false
+  }
+ ],
+ "geometry": {
+  "size": [
+   892,
+   770
+  ],
+  "board": [
+   40,
+   96,
+   532,
+   532
+  ],
+  "origin": [
+   46,
+   102
+  ],
+  "pitch": 40.0,
+  "rows": 13,
+  "cols": 13,
+  "rack": [
+   110,
+   668,
+   392,
+   62
+  ],
+  "rack_slots": [
+   [
+    117,
+    675,
+    48,
+    48
+   ],
+   [
+    172,
+    675,
+    48,
+    48
+   ],
+   [
+    227,
+    675,
+    48,
+    48
+   ],
+   [
+    282,
+    675,
+    48,
+    48
+   ],
+   [
+    337,
+    675,
+    48,
+    48
+   ],
+   [
+    392,
+    675,
+    48,
+    48
+   ],
+   [
+    447,
+    675,
+    48,
+    48
+   ]
+  ],
+  "header": [
+   0,
+   0,
+   892,
+   56
+  ],
+  "timer": [
+   732,
+   8,
+   120,
+   39
+  ],
+  "chat": [
+   612,
+   96,
+   240,
+   532
+  ]
+ },
+ "dragging": false
+}

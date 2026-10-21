@@ -1,0 +1,606 @@
+{
+ "theme": "slate",
+ "held_out": false,
+ "profile": "Demo Garden",
+ "cell": 48,
+ "scale": 1.0,
+ "board": [
+  [
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "V",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "I",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "A",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   {
+    "letter": "S",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   {
+    "letter": "M",
+    "blank": false,
+    "state": "committed"
+   },
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "I",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   {
+    "letter": "Z",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "O",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "N",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "E",
+    "blank": false,
+    "state": "committed"
+   },
+   null
+  ],
+  [
+   null,
+   null,
+   {
+    "letter": "C",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "H",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "A",
+    "blank": true,
+    "state": "committed"
+   },
+   {
+    "letter": "I",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "N",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   {
+    "letter": "E",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   {
+    "letter": "A",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   {
+    "letter": "O",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "F",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   {
+    "letter": "S",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "W",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "I",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "M",
+    "blank": false,
+    "state": "committed"
+   }
+  ],
+  [
+   null,
+   null,
+   null,
+   {
+    "letter": "T",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   {
+    "letter": "D",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   {
+    "letter": "L",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   {
+    "letter": "Y",
+    "blank": false,
+    "state": "committed"
+   }
+  ],
+  [
+   null,
+   null,
+   {
+    "letter": "J",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "E",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "T",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   {
+    "letter": "B",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "E",
+    "blank": true,
+    "state": "committed"
+   },
+   {
+    "letter": "E",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "R",
+    "blank": false,
+    "state": "committed"
+   },
+   null
+  ],
+  [
+   null,
+   null,
+   {
+    "letter": "U",
+    "blank": false,
+    "state": "recent"
+   },
+   null,
+   {
+    "letter": "H",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   {
+    "letter": "C",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "O",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "L",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "D",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   {
+    "letter": "T",
+    "blank": false,
+    "state": "committed"
+   }
+  ],
+  [
+   null,
+   null,
+   {
+    "letter": "G",
+    "blank": false,
+    "state": "recent"
+   },
+   null,
+   {
+    "letter": "I",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   {
+    "letter": "U",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   {
+    "letter": "E",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "R",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "A",
+    "blank": false,
+    "state": "committed"
+   }
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "S",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "T",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "A",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "G",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "E",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   {
+    "letter": "A",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "X",
+    "blank": false,
+    "state": "committed"
+   }
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "A",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   {
+    "letter": "F",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "A",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "N",
+    "blank": false,
+    "state": "committed"
+   },
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "B",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "O",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "O",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "T",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   {
+    "letter": "P",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "R",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "O",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "D",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "E",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null
+  ],
+  [
+   null,
+   null,
+   null,
+   null,
+   {
+    "letter": "R",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "U",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "L",
+    "blank": false,
+    "state": "committed"
+   },
+   {
+    "letter": "E",
+    "blank": false,
+    "state": "committed"
+   },
+   null,
+   null,
+   null,
+   null,
+   null
+  ]
+ ],
+ "rack": [
+  {
+   "letter": "S",
+   "blank": false
+  },
+  {
+   "letter": "Q",
+   "blank": false
+  },
+  {
+   "letter": "W",
+   "blank": false
+  },
+  {
+   "letter": "I",
+   "blank": false
+  },
+  {
+   "letter": "Y",
+   "blank": false
+  },
+  {
+   "letter": "K",
+   "blank": false
+  },
+  {
+   "letter": "L",
+   "blank": false
+  }
+ ],
+ "geometry": {
+  "size": [
+   1072,
+   927
+  ],
+  "board": [
+   48,
+   115,
+   640,
+   640
+  ],
+  "origin": [
+   56,
+   123
+  ],
+  "pitch": 48.0,
+  "rows": 13,
+  "cols": 13,
+  "rack": [
+   129,
+   803,
+   478,
+   76
+  ],
+  "rack_slots": [
+   [
+    138,
+    812,
+    58,
+    58
+   ],
+   [
+    205,
+    812,
+    58,
+    58
+   ],
+   [
+    272,
+    812,
+    58,
+    58
+   ],
+   [
+    339,
+    812,
+    58,
+    58
+   ],
+   [
+    406,
+    812,
+    58,
+    58
+   ],
+   [
+    473,
+    812,
+    58,
+    58
+   ],
+   [
+    540,
+    812,
+    58,
+    58
+   ]
+  ],
+  "header": [
+   0,
+   0,
+   1072,
+   67
+  ],
+  "timer": [
+   880,
+   10,
+   144,
+   47
+  ],
+  "chat": [
+   736,
+   115,
+   288,
+   640
+  ]
+ },
+ "dragging": false
+}
