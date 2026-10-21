@@ -62,3 +62,10 @@ class Lexicon:
         if not lex.words:
             raise WordListError(f"word list has no usable words: {path}")
         return lex
+
+
+def lexicon_for(profile, words_path: str | Path | None = None) -> Lexicon:
+    path = words_path or profile.word_list
+    if path is None:
+        raise WordListError("no word list: set words.path in the profile or choose one")
+    return Lexicon.load(path, profile.alphabet)

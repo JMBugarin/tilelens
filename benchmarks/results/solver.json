@@ -1,0 +1,58 @@
+{
+  "hardware": {
+    "machine": "arm64",
+    "cpu": "Apple M5 Pro",
+    "memory_gb": 24.0,
+    "os": "macOS-26.6-arm64-arm-64bit-Mach-O",
+    "python": "3.13.16"
+  },
+  "profile": "Demo Garden",
+  "word_list": "/usr/share/dict/words",
+  "words": 204217,
+  "dawg_nodes": 103315,
+  "dawg_build_s": 0.58,
+  "dawg_cache_load_s": 0.05,
+  "peak_rss_mb": 184.1,
+  "scenarios": {
+    "opening, 7 tiles": {
+      "n": 40,
+      "median_ms": 1.23,
+      "p95_ms": 2.96,
+      "worst_ms": 6.15,
+      "boards": 1,
+      "incomplete": 0
+    },
+    "mid-game, 7 tiles": {
+      "n": 80,
+      "median_ms": 2.23,
+      "p95_ms": 6.17,
+      "worst_ms": 7.05,
+      "boards": 40,
+      "incomplete": 0
+    },
+    "dense, 5 tiles + 2 blanks": {
+      "n": 80,
+      "median_ms": 16.96,
+      "p95_ms": 94.66,
+      "worst_ms": 117.67,
+      "boards": 40,
+      "incomplete": 0
+    },
+    "dense, 1 blank": {
+      "n": 80,
+      "median_ms": 5.91,
+      "p95_ms": 23.95,
+      "worst_ms": 30.29,
+      "boards": 40,
+      "incomplete": 0
+    },
+    "late game, 2-4 tiles": {
+      "n": 80,
+      "median_ms": 0.47,
+      "p95_ms": 0.71,
+      "worst_ms": 0.96,
+      "boards": 40,
+      "incomplete": 0
+    }
+  }
+}
