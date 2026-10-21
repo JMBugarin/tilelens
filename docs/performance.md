@@ -45,3 +45,29 @@ under the time one capture frame takes.
 - One dense self-play board with a two-blank rack, checked against the full 204k list, also
   matched exactly: 12,372 placements, found in 80 ms by the search and in 7.3 s by brute
   force.
+
+## End to end
+
+`uv run python benchmarks/bench_e2e.py --mode inproc --events 40`
+
+This measures the time from a stable change in the fake game window (the last animation frame
+drawn) to the matching result being published to the panel. The full app runs in one process:
+the live controller at 10 Hz, the recognizer, the solver worker process, the overlay and the
+panel. In this mode frames come straight from the fake game window rather than from screen
+capture.
+
+| Mode | Position changes | Median | p95 | Worst | Stale results shown |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| in-process frames, 40 game events | 20 | 490 ms | 517 ms | 520 ms | 0 |
+| real screen capture, 12 game events | 5 | 509 ms | 573 ms | 573 ms | see note |
+
+- Most of the time is spent waiting on purpose. A position must look the same on three
+  consecutive frames at 10 Hz before it is trusted, which is about 300 ms plus up to one frame
+  of alignment.
+- Reading takes about 25 ms per frame and the search takes a few ms on the demo list.
+- The real-screen row is from a single run made before a rack-recognition fix. It also showed
+  that the overlay never appeared in captures. Later screen runs were blocked because the
+  display was asleep (see `docs/manual-verification.md`).
+- Hardware and versions: Apple M5 Pro, 24 GB, macOS 26.6, Python 3.13.16, PySide6 6.12.0,
+  OpenCV 5.0.0.93, NumPy 2.5.4, mss 10.2.0. The raw JSON is in
+  `benchmarks/results/e2e-inproc.json`.
