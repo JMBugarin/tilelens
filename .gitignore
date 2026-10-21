@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+.DS_Store
+.env
+.env.*
+
+# local runtime data
+debug_dumps/
+*.dawg.npz
+benchmarks/results/*.local.json
+packaging/deploy/
+deployment/
+*.app/
+*.dmg

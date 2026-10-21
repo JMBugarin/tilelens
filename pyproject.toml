@@ -1,0 +1,48 @@
+[project]
+name = "tilelens"
+version = "0.1.0"
+description = "Screen-reading move finder for crossword-style tile games"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Joshua Bugarin", email = "jbugarin85424@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "mss==10.2.0",
+    "numpy==2.5.4",
+    "opencv-python-headless==5.0.0.93",
+    "pyobjc-framework-cocoa==12.2.2 ; sys_platform == 'darwin'",
+    "pyobjc-framework-quartz==12.2.2 ; sys_platform == 'darwin'",
+    "pyside6-essentials==6.12.0",
+]
+
+[project.scripts]
+tilelens = "tilelens.app:main"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "ruff==0.17.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gui: needs a Qt platform plugin (run with QT_QPA_PLATFORM=offscreen)",
+    "slow: long-running randomized validation",
+]
+addopts = "-ra"
