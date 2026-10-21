@@ -1,0 +1,361 @@
+from __future__ import annotations
+
+import time
+from collections import Counter, OrderedDict
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+import numpy as np
+
+from tilelens.capture.change import ChangeDetector
+from tilelens.rules.board import Board, rack_to_str
+from tilelens.rules.profile import BLANK, Profile
+from tilelens.solver.movegen import SearchResult
+from tilelens.state.position import position_id
+from tilelens.vision.recognizer import (
+    SCALE_CHANGED,
+    CellFix,
+    Reading,
+    Recognizer,
+    as_fix,
+)
+
+MIN_HZ, MAX_HZ = 8.0, 12.0
+IDLE_AFTER = 2.0
+IDLE_INTERVAL = 0.5
+CACHE_SIZE = 64
+
+
+class Status(StrEnum):
+    READING = "Reading"
+    SOLVING = "Solving"
+    READY = "Ready"
+    CHECK = "Check tiles"
+    PAUSED = "Paused"
+    NOT_VISIBLE = "Game not visible"
+
+
+WAITING = "Waiting for board"
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    status: Status
+    detail: str = ""
+    pid: str | None = None
+    board: Board | None = None
+    rack: Counter | None = None
+    result: SearchResult | None = None
+    reading: Reading | None = field(default=None, compare=False)
+    confirmed_at: float | None = None
+    published_at: float | None = None
+    solve_ms: float | None = None
+
+    @property
+    def showing_result(self) -> bool:
+        return self.result is not None
+
+
+class LiveController:
+    """Turns captured frames into at most one current, never-stale search result.
+
+    Pure logic with injected source, recognizer, solver and clock so replays can drive it.
+    """
+
+    def __init__(
+        self,
+        source,
+        recognizer: Recognizer,
+        solver,
+        profile: Profile,
+        lexicon_version: str,
+        clock: Callable[[], float] = time.monotonic,
+        hz: float = 10.0,
+        stable_frames: int = 3,
+        on_update: Callable[[Snapshot], None] | None = None,
+    ):
+        self.source = source
+        self.recognizer = recognizer
+        self.solver = solver
+        self.profile = profile
+        self.lexicon_version = lexicon_version
+        self.clock = clock
+        self.hz = min(MAX_HZ, max(MIN_HZ, hz))
+        self.stable_frames = max(1, stable_frames)
+        self.on_update = on_update
+        self.cache: OrderedDict[str, SearchResult] = OrderedDict()
+        self.paused = False
+        self.stale_discarded = 0
+        self.searches_started = 0
+        self._change: ChangeDetector | None = None
+        self._snapshot = Snapshot(Status.READING, "Starting")
+        self._candidate_sig = None
+        self._count = 0
+        self._stable_sig = None
+        self._stable_frame: np.ndarray | None = None
+        self._check_reading: Reading | None = None
+        self._last_change = clock()
+        self._force = False
+        self._confirmed_rack_size: int | None = None
+        self._submitted_at: float | None = None
+        self._confirmed_at: float | None = None
+        self.last_confirmed: tuple[Board, Counter, list[str]] | None = None
+
+    @property
+    def snapshot(self) -> Snapshot:
+        return self._snapshot
+
+    def _set(self, status: Status, detail: str = "", **kw) -> None:
+        snap = Snapshot(status, detail, **kw)
+        if snap != self._snapshot:
+            self._snapshot = snap
+            if self.on_update:
+                self.on_update(snap)
+
+    def interval(self) -> float:
+        if self.paused:
+            return IDLE_INTERVAL
+        quiet = self.clock() - self._last_change > IDLE_AFTER
+        if quiet and self._snapshot.status in (Status.READY, Status.CHECK, Status.NOT_VISIBLE):
+            return IDLE_INTERVAL
+        return 1.0 / self.hz
+
+    def pause(self) -> None:
+        self.paused = True
+        self.solver.cancel()
+        self._reset_stability()
+        self._set(Status.PAUSED, "Paused")
+
+    def resume(self) -> None:
+        if self.paused:
+            self.paused = False
+            self._set(Status.READING, "Reading")
+
+    def rescan(self) -> None:
+        self._reset_stability()
+        self._force = True
+        self._set(Status.READING, "Reading")
+
+    def set_recognizer(self, recognizer: Recognizer) -> None:
+        self.recognizer = recognizer
+        self._change = None
+        self.rescan()
+
+    def _reset_stability(self) -> None:
+        self._candidate_sig = None
+        self._count = 0
+        self._stable_sig = None
+        self._check_reading = None
+        if self._change:
+            self._change.reset()
+
+    def _watch_regions(self, frame) -> ChangeDetector:
+        if self._change is None:
+            cal = self.recognizer.cal
+            h, w = frame.shape[:2]
+            cw, ch = cal.image_size
+            fx, fy = w / cw, h / ch
+            gx, gy, gw, gh = cal.grid.rect
+            x0, y0, x1, y1 = cal.rack_band
+
+            def sc(r):
+                return (round(r[0] * fx), round(r[1] * fy), round(r[2] * fx), round(r[3] * fy))
+
+            regions = [sc((gx, gy, gw, gh)), sc((x0, y0, x1 - x0, y1 - y0))]
+            self._change = ChangeDetector(regions, [sc(m) for m in cal.masks])
+        return self._change
+
+    def tick(self) -> None:
+        now = self.clock()
+        self._drain(now)
+        if self.paused:
+            self._set(Status.PAUSED, "Paused")
+            return
+        frame = self.source.grab()
+        if frame is None:
+            self._not_visible("Capture failed")
+            return
+        detector = self._watch_regions(frame)
+        changed = detector.update(frame)
+        if changed:
+            self._last_change = now
+        snap = self._snapshot
+        settled = (
+            self._stable_sig is not None
+            and self._candidate_sig == self._stable_sig
+            and (snap.status != Status.READING or snap.detail == WAITING)
+        )
+        if not changed and settled and not self._force:
+            return
+        reading = self.recognizer.read(frame)
+        if not reading.visible:
+            self._not_visible("Board not found in the captured region")
+            return
+        sig = reading.signature()
+        if sig == self._candidate_sig:
+            self._count += 1
+        else:
+            self._candidate_sig = sig
+            self._count = 1
+        if sig == self._stable_sig and not self._force and self._snapshot.status != Status.READING:
+            return
+        if self._count >= self.stable_frames:
+            self._force = False
+            self._on_stable(reading, frame, sig, now)
+        else:
+            detail = WAITING if reading.tentative_squares() else "Reading"
+            self._set(Status.READING, detail)
+
+    def _not_visible(self, why: str) -> None:
+        self.solver.cancel()
+        self._reset_stability()
+        self._set(Status.NOT_VISIBLE, why)
+
+    def _on_stable(self, reading: Reading, frame, sig, now) -> None:
+        self._stable_sig = sig
+        self._stable_frame = frame
+        self._check_reading = None
+        rack = reading.rack_counter()
+        if reading.tentative_squares():
+            shrunk = (
+                self._confirmed_rack_size is not None
+                and sum(rack.values()) < self._confirmed_rack_size
+            )
+            if shrunk or not any(
+                reading.cells[r][c].uncertain for r, c in reading.tentative_squares()
+            ):
+                self.solver.cancel()
+                self._set(Status.READING, WAITING)
+                return
+        if not reading.confident:
+            self._check_reading = reading
+            self.solver.cancel()
+            self._set(Status.CHECK, self._check_detail(reading), reading=reading)
+            return
+        order = [BLANK if t.blank else (t.letter or "") for t in reading.rack]
+        self._confirm(reading.placed(), rack, order, now)
+
+    def _check_detail(self, reading: Reading) -> str:
+        if SCALE_CHANGED in reading.warnings:
+            return "Board size changed; recalibrate"
+        parts = []
+        n = len(reading.uncertain_cells)
+        if n:
+            parts.append(f"{n} square{'s' if n != 1 else ''} to check")
+        if reading.rack_uncertain:
+            parts.append("rack to check")
+        parts += [w for w in reading.warnings]
+        return "; ".join(parts) or "Check tiles"
+
+    def _confirm(self, board: Board, rack: Counter, order: list[str], now: float) -> None:
+        self._confirmed_rack_size = sum(rack.values())
+        self.last_confirmed = (board, Counter(rack), order)
+        self._confirmed_at = now
+        pid = position_id(board, rack, self.profile, self.lexicon_version)
+        base = dict(pid=pid, board=board, rack=Counter(rack), confirmed_at=now)
+        if pid in self.cache:
+            self.cache.move_to_end(pid)
+            self._set(
+                Status.READY, "", result=self.cache[pid], published_at=now, solve_ms=0.0, **base
+            )
+            return
+        if not rack:
+            empty = SearchResult([], True, 0, 0.0)
+            self._set(Status.READY, "Rack is empty", result=empty, published_at=now, **base)
+            return
+        self._submitted_at = now
+        self.searches_started += 1
+        self.solver.submit(pid, board.to_rows(), rack_to_str(rack))
+        self._set(Status.SOLVING, "Solving", **base)
+
+    def _drain(self, now: float) -> None:
+        outcomes = self.solver.poll()
+        fatal = getattr(self.solver, "fatal", None)
+        if fatal and self._snapshot.status == Status.SOLVING:
+            self._set(Status.CHECK, f"Solver stopped: {fatal}", **self._keep(self._snapshot))
+        for outcome in outcomes:
+            res = outcome.result
+            if res is not None and res.complete:
+                self.cache[outcome.pid] = res
+                self.cache.move_to_end(outcome.pid)
+                while len(self.cache) > CACHE_SIZE:
+                    self.cache.popitem(last=False)
+            snap = self._snapshot
+            if snap.status != Status.SOLVING or outcome.pid != snap.pid:
+                self.stale_discarded += 1
+                continue
+            if res is None:
+                self._set(Status.CHECK, f"Search failed: {outcome.error}", **self._keep(snap))
+                continue
+            self._set(
+                Status.READY,
+                "",
+                result=res,
+                published_at=now,
+                solve_ms=res.elapsed * 1000,
+                **self._keep(snap),
+            )
+
+    @staticmethod
+    def _keep(snap: Snapshot) -> dict:
+        return dict(pid=snap.pid, board=snap.board, rack=snap.rack, confirmed_at=snap.confirmed_at)
+
+    def apply_corrections(
+        self,
+        board_fixes: dict[tuple[int, int], CellFix | tuple[str, bool] | None],
+        rack: str | None = None,
+        rack_fixes: dict[int, str] | None = None,
+    ) -> bool:
+        """Apply the correction grid. Returns True when the position could be confirmed."""
+        reading = self._check_reading
+        if reading is None or self._stable_frame is None:
+            return False
+        frame = self._stable_frame
+        self.recognizer.learn_from_corrections(frame, reading, board_fixes, rack_fixes)
+        fixes = {k: as_fix(v) for k, v in board_fixes.items()}
+        cells = []
+        for r, row in enumerate(reading.cells):
+            out = []
+            for c, cell in enumerate(row):
+                fix = fixes.get((r, c))
+                if fix is not None:
+                    out.append((fix.letter, fix.blank) if fix.letter and fix.played else None)
+                elif cell.uncertain:
+                    return False
+                else:
+                    played = cell.letter and cell.state not in ("tentative", "unknown")
+                    out.append((cell.letter, cell.blank) if played else None)
+            cells.append(out)
+        board = Board(len(cells[0]), len(cells), cells)
+        if rack is not None:
+            letters = [ch.upper() if ch != BLANK else BLANK for ch in rack if not ch.isspace()]
+        else:
+            letters = [BLANK if t.blank else t.letter for t in reading.rack]
+            for i, ch in (rack_fixes or {}).items():
+                if i < len(letters):
+                    letters[i] = ch
+            if any(t.uncertain for i, t in enumerate(reading.rack) if i not in (rack_fixes or {})):
+                return False
+        if any(not ch for ch in letters):
+            return False
+        rack_counter = Counter(letters)
+        self._check_reading = None
+        again = self.recognizer.read(frame)
+        if again.confident and again.placed() == board and again.rack_counter() == rack_counter:
+            self._stable_sig = again.signature()
+            self._candidate_sig = self._stable_sig
+        self._confirm(board, rack_counter, letters, self.clock())
+        return True
+
+    def recalibrated(self) -> None:
+        """Call after the recognizer's calibration was replaced or updated."""
+        self._change = None
+        self.rescan()
+
+
+def snapshot_age(snap: Snapshot, now: float) -> float | None:
+    return None if snap.published_at is None else now - snap.published_at
+
+
+__all__ = ["WAITING", "LiveController", "Snapshot", "Status", "snapshot_age"]
