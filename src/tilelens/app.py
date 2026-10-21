@@ -39,7 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     read.add_argument("--calibration", required=True)
     read.add_argument("--image", required=True)
 
-    sub.add_parser("doctor", help="check permissions, platform support and versions")
+    doc = sub.add_parser("doctor", help="check permissions, platform support and versions")
+    doc.add_argument("--solver", action="store_true", help="also start the solver worker")
     sub.add_parser("demo", help="run against the built-in fake game (no screen capture needed)")
 
     imp = sub.add_parser("import-words", help="normalize a word list into the app data folder")
@@ -59,7 +60,8 @@ def cmd_check_profile(args) -> int:
         for err in exc.errors:
             print(f"  - {err}", file=sys.stderr)
         return 1
-    print(f"ok: {p.name} ({p.width}x{p.height}, rack {p.rack_size}, {p.blanks} blanks)")
+    blanks = f"{p.blanks} blank{'s' if p.blanks != 1 else ''}"
+    print(f"ok: {p.name} ({p.width}x{p.height}, rack {p.rack_size}, {blanks})")
     return 0
 
 
@@ -203,6 +205,27 @@ def cmd_doctor(args) -> int:
     except UnsupportedPlatform as exc:
         print(f"platform: {exc}")
         return 2
+    if getattr(args, "solver", False):
+        import time
+
+        from tilelens.rules.profile import demo_profile_dir
+        from tilelens.state.worker import ProcessSolver
+
+        t0 = time.perf_counter()
+        solver = ProcessSolver(demo_profile_dir() / "demo_pocket.toml")
+        ok = solver.wait_ready(60)
+        result = None
+        if ok:
+            solver.submit("doctor", ["." * 9] * 9, "TONES")
+            end = time.monotonic() + 30
+            while result is None and time.monotonic() < end:
+                outs = solver.poll()
+                result = outs[0].result if outs else None
+                time.sleep(0.01)
+        solver.close()
+        elapsed = (time.perf_counter() - t0) * 1000
+        status = f"ok ({elapsed:.0f} ms)" if result and result.moves else f"failed {solver.fatal}"
+        print(f"{'solver worker':24s} {status}")
     print(f"{'platform adapter':24s} {adapter.name}")
     allowed = adapter.screen_permission()
     status = {True: "granted", False: "denied", None: "unknown"}[allowed]

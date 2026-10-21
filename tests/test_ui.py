@@ -299,3 +299,15 @@ def test_overlay_excluded_from_capture_on_macos():
         env={**__import__("os").environ, "QT_QPA_PLATFORM": "cocoa"},
     )
     assert "EXCLUDED" in out.stdout and "NOT_EXCLUDED" not in out.stdout, out.stderr
+
+
+def test_debug_dump_only_on_request(qapp, calibration, tmp_path, monkeypatch):
+    monkeypatch.setenv("TILELENS_HOME", str(tmp_path / "home"))
+    session, game, frame = make_session(qapp, calibration, tmp_path)
+    run_until(qapp, session, {Status.READY})
+    dumps = tmp_path / "home" / "debug_dumps"
+    assert not dumps.exists()
+    path = session.save_debug_dump()
+    assert path.is_file() and path.with_suffix(".json").is_file()
+    assert len(list(dumps.iterdir())) == 2
+    session.stop()

@@ -18,3 +18,8 @@ packaging/deploy/
 deployment/
 *.app/
 *.dmg
+*.build/
+*.dist/
+*.onefile-build/
+packaging/*.bin
+packaging/*.app

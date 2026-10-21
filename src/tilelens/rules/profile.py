@@ -340,8 +340,16 @@ def _parse_letter_map(raw, label, errors, required):
 
 
 def demo_profile_dir() -> Path:
+    import sys
+
     here = Path(__file__).resolve()
-    for candidate in (here.parents[3] / "profiles", here.parents[1] / "profiles"):
+    candidates = (
+        here.parents[3] / "profiles",
+        here.parents[2] / "profiles",
+        here.parents[1] / "profiles",
+        Path(sys.argv[0]).resolve().parent / "profiles",
+    )
+    for candidate in candidates:
         if candidate.is_dir():
             return candidate
     raise FileNotFoundError("demo profiles directory not found")

@@ -106,3 +106,10 @@ def test_doctor_runs(capsys):
     out = capsys.readouterr().out
     assert "screen capture" in out and "numpy" in out
     assert code in (0, 1, 2)
+
+
+def test_doctor_starts_solver_worker(capsys):
+    from tilelens.app import main
+
+    main(["doctor", "--solver"])
+    assert "solver worker            ok" in capsys.readouterr().out

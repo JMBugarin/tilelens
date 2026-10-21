@@ -142,10 +142,13 @@ class MainWindow(QMainWindow):
             "exclude: overlay hidden from capture; suppress: hidden during each capture; "
             "panel_only: no overlay, preview in this window"
         )
+        self.dump_btn = QPushButton("Save debug dump")
+        self.dump_btn.setToolTip("Save the current capture and what was read from it to disk")
         opts.addWidget(self.profile_btn)
         opts.addWidget(self.words_btn)
         opts.addWidget(QLabel("Overlay:"))
         opts.addWidget(self.mode)
+        opts.addWidget(self.dump_btn)
         opts.addStretch(1)
         self.profile_name = QLabel(session.profile.name)
         self.profile_name.setObjectName("muted")
@@ -159,6 +162,7 @@ class MainWindow(QMainWindow):
         self.words_btn.clicked.connect(self.choose_words)
         self.profile_btn.clicked.connect(self.choose_profile)
         self.mode.currentTextChanged.connect(self.set_mode)
+        self.dump_btn.clicked.connect(self.save_dump)
         session.updated.connect(self.show_snapshot)
         session.message.connect(self.show_message)
 
@@ -275,6 +279,10 @@ class MainWindow(QMainWindow):
                     "Some squares are still unclear; fill in every highlighted square."
                 )
         return dlg
+
+    def save_dump(self) -> None:
+        path = self.session.save_debug_dump()
+        self.show_message(f"Saved {path}" if path else "Nothing captured yet.")
 
     def choose_words(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
