@@ -66,11 +66,19 @@ Each theme is calibrated on three of its own screens and read on 60 others at th
 
 | Theme | Squares correct | Squares flagged | Silent errors | Rack exact | Rack flagged | Positions fully read |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| meadow | 100% | 0% | 0 | 93.5% | 6.5% | 66.7% |
-| slate | 100% | 0% | 0 | 96.4% | 3.6% | 80.0% |
-| candy | 100% | 0% | 0 | 100% | 0% | 100% |
-| paper | 100% | 0% | 0 | 100% | 0% | 100% |
-| **ember (held out)** | **100%** | **0%** | **0** | **97.6%** | **2.4%** | **85.0%** |
+| meadow | 100% | 0% | 0 | 96.2% | 3.8% | 75.0% |
+| slate | 99.87% | 0.13% | 0 | 97.6% | 2.4% | 63.3% |
+| candy | 100% | 0% | 0 | 98.1% | 1.9% | 86.7% |
+| paper | 100% | 0% | 0 | 88.2% | 11.8% | 41.7% |
+| **ember (held out)** | **100%** | **0%** | **0** | **95.7%** | **4.3%** | **75.0%** |
+
+With eight calibration screens instead of three, rack flags fall to 0% for meadow, slate and
+candy, 4.1% for paper and 2.4% for ember, still with no silent errors.
+
+Rack tiles are matched first against templates taken from the rack itself. A letter only seen
+on the board can still be accepted on the rack, but only with a score of at least 0.90 and a
+lead of 0.08 over the next letter. On 175 rack tiles per theme, that rule accepted 81 to 100%
+of them and none wrongly.
 
 - Each theme has 10,140 squares, and 60 positions with 380 to 420 rack tiles.
 - "Positions fully read" means the board and rack were read with nothing flagged. Every other

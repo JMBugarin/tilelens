@@ -1,0 +1,35 @@
+{
+  "hardware": {
+    "machine": "arm64",
+    "cpu": "Apple M5 Pro",
+    "memory_gb": 24.0,
+    "os": "macOS-26.6-arm64-arm-64bit-Mach-O",
+    "python": "3.13.16"
+  },
+  "versions": {
+    "tilelens": "0.1.0",
+    "python": "3.13.16",
+    "os": "macOS-26.6-arm64-arm-64bit-Mach-O",
+    "pyside6-essentials": "6.12.0",
+    "opencv-python-headless": "5.0.0.93",
+    "numpy": "2.5.4",
+    "mss": "10.2.0"
+  },
+  "result": {
+    "mode": "inproc",
+    "overlay_mode": "exclude",
+    "game_events": 40,
+    "position_changes_measured": 20,
+    "latency_median_ms": 490.4,
+    "latency_p95_ms": 517.3,
+    "latency_worst_ms": 520.4,
+    "stale_results_published": 0,
+    "check_tiles_answered": 1,
+    "changes_never_resolved": 0,
+    "overlay_leak_checks": 0,
+    "overlay_leak_max_mean_diff": 0.0,
+    "final_status": "Ready",
+    "elapsed_s": 156.6,
+    "notes": []
+  }
+}

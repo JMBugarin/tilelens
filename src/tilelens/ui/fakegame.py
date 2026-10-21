@@ -44,6 +44,7 @@ class FakeGameWindow(QWidget):
         self._action = None
         self._ticks = 0
         self._idle = 0
+        self.last_change_at = time.monotonic()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.step)
         self.redraw()
@@ -52,6 +53,8 @@ class FakeGameWindow(QWidget):
 
     def redraw(self) -> None:
         self.frame_cache = self.game.frame()
+        self.previous_position = getattr(self, "frame_position", None)
+        self.frame_position = self.game.position()
         pix = QPixmap.fromImage(to_qimage(self.frame_cache))
         self.view.setPixmap(pix)
         self.view.setFixedSize(pix.size())
@@ -94,9 +97,15 @@ class FakeGameWindow(QWidget):
         name, gen = self._action
         try:
             next(gen)
+            self.last_change_at = time.monotonic()
         except StopIteration:
             self._action = None
             self._idle = 20
             self.events.append((time.monotonic(), f"stable after {name}"))
             self.stepped.emit(name)
+        self.redraw()
+
+    def show_game(self, game: FakeGame) -> None:
+        self.game = game
+        self._action = None
         self.redraw()

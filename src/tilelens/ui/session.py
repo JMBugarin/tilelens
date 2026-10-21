@@ -8,7 +8,7 @@ import numpy as np
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 
-from tilelens.capture.source import ScreenSource
+from tilelens.capture.source import PermissionGate, ScreenSource
 from tilelens.paths import calibration_dir
 from tilelens.platforms import PlatformAdapter, Region
 from tilelens.rules.lexicon import Lexicon, WordListError, lexicon_for
@@ -142,7 +142,7 @@ class LiveSession(QObject):
             region = self.settings.region_obj
             if region is None or self.adapter is None:
                 return _NullSource()
-            src = ScreenSource(self.adapter, region)
+            src = PermissionGate(ScreenSource(self.adapter, region), self.adapter)
         if self.settings.overlay_mode == "suppress":
             return SuppressingSource(src, self.overlay)
         return src

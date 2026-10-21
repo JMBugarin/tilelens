@@ -39,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     read.add_argument("--calibration", required=True)
     read.add_argument("--image", required=True)
 
+    sub.add_parser("doctor", help="check permissions, platform support and versions")
     sub.add_parser("demo", help="run against the built-in fake game (no screen capture needed)")
 
     imp = sub.add_parser("import-words", help="normalize a word list into the app data folder")
@@ -175,6 +176,46 @@ def cmd_read(args) -> int:
     return 0 if reading.confident else 3
 
 
+def versions() -> dict[str, str]:
+    import platform
+    from importlib.metadata import PackageNotFoundError, version
+
+    out = {"tilelens": __version__, "python": platform.python_version(), "os": platform.platform()}
+    for pkg in ("pyside6-essentials", "opencv-python-headless", "numpy", "mss"):
+        try:
+            out[pkg] = version(pkg)
+        except PackageNotFoundError:
+            out[pkg] = "missing"
+    return out
+
+
+def cmd_doctor(args) -> int:
+    from tilelens.paths import data_dir
+    from tilelens.platforms import UnsupportedPlatform, get_adapter
+    from tilelens.solver.dawg import cache_dir
+
+    for key, value in versions().items():
+        print(f"{key:24s} {value}")
+    print(f"{'data folder':24s} {data_dir()}")
+    print(f"{'cache folder':24s} {cache_dir()}")
+    try:
+        adapter = get_adapter()
+    except UnsupportedPlatform as exc:
+        print(f"platform: {exc}")
+        return 2
+    print(f"{'platform adapter':24s} {adapter.name}")
+    allowed = adapter.screen_permission()
+    status = {True: "granted", False: "denied", None: "unknown"}[allowed]
+    print(f"{'screen capture':24s} {status}")
+    if allowed is False:
+        print()
+        print(adapter.permission_help())
+        adapter.close()
+        return 1
+    adapter.close()
+    return 0
+
+
 def cmd_import_words(args) -> int:
     from tilelens.rules.lexicon import WordListError
     from tilelens.rules.profile import ProfileError, load_profile
@@ -206,6 +247,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_calibrate(args)
     if args.command == "read":
         return cmd_read(args)
+    if args.command == "doctor":
+        return cmd_doctor(args)
     if args.command == "demo":
         from tilelens.ui.app_main import run
 

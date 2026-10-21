@@ -135,6 +135,7 @@ def test_unseen_blank_style_is_never_silently_a_normal_letter(theme, profile):
 def test_missing_letter_is_flagged_then_learned(profile, calibrations):
     rec = recognizer_for("slate", profile, calibrations)
     rec.cal.templates.pop("E")
+    rec.cal.rack_templates.pop("E", None)
     rec._rebuild_templates()
     assert rec.missing_letters == ["E"]
     seed = next(
