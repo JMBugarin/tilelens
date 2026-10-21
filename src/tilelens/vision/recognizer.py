@@ -178,6 +178,24 @@ class Calibration:
         return cls.from_json(Path(path).read_text())
 
 
+@dataclass(frozen=True)
+class CellFix:
+    """A user correction: letter None means empty; played False means not yet submitted."""
+
+    letter: str | None
+    blank: bool = False
+    played: bool = True
+
+
+def as_fix(value) -> CellFix:
+    if isinstance(value, CellFix):
+        return value
+    if value is None:
+        return CellFix(None)
+    letter, blank = value
+    return CellFix(letter, blank)
+
+
 @dataclass
 class CellRead:
     letter: str | None = None
@@ -408,22 +426,23 @@ class Recognizer:
         self,
         img: np.ndarray,
         reading: Reading,
-        board_fixes: dict[tuple[int, int], tuple[str, bool] | None],
+        board_fixes: dict[tuple[int, int], CellFix | tuple[str, bool] | None],
         rack_fixes: dict[int, str] | None = None,
     ) -> None:
         """Teach the recognizer from user corrections on one frame.
 
-        board_fixes maps (row, col) to (letter, blank) for a played tile or None for empty;
-        rack_fixes maps a rack slot index to its letter or '?'.
+        board_fixes maps (row, col) to a CellFix, a (letter, blank) pair for a played tile, or
+        None for an empty square; rack_fixes maps a rack slot index to its letter or '?'.
         """
         feats = reading.features
         crops = reading.crops
         cols = len(reading.cells[0])
-        for (r, c), fix in board_fixes.items():
+        for (r, c), raw in board_fixes.items():
+            fix = as_fix(raw)
             v = feats[r, c]
             key = self._keys[r][c]
             glyph = extract_glyph(crops[r * cols + c], v)
-            if fix is None:
+            if fix.letter is None:
                 proto = self.cal.empty.get(key)
                 if proto is None:
                     self.cal.empty[key] = Proto(v.copy(), 6.0)
@@ -432,12 +451,16 @@ class Recognizer:
                 if glyph is not None and glyph.ink_fraction >= 0.012:
                     self.cal.add_empty_glyph(key, glyph.vec)
                 continue
-            letter, blank = fix
-            if not any(p.distance(v) < MATCH for p in self.cal.tiles):
-                self.cal.tiles.append(Proto(v.copy(), 8.0, RECENT))
+            state = RECENT if fix.played else TENTATIVE
+            near = [p for p in self.cal.tiles if p.distance(v) < MATCH]
+            if not near:
+                self.cal.tiles.append(Proto(v.copy(), 8.0, state))
+            elif not fix.played:
+                for p in near:
+                    p.state = TENTATIVE
             if glyph is not None:
-                self.cal.add_template(letter, glyph.vec)
-                if blank and self.cal.blank_ink is None:
+                self.cal.add_template(fix.letter, glyph.vec)
+                if fix.blank and self.cal.blank_ink is None:
                     self.cal.blank_ink = glyph.ink.copy()
         if rack_fixes:
             band, f = self._rack_band(img, reading.grid)
