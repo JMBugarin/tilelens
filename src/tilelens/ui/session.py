@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 
 from tilelens.capture.source import PermissionGate, ScreenSource
-from tilelens.paths import calibration_dir
+from tilelens.paths import calibration_dir, debug_dump_dir
 from tilelens.platforms import PlatformAdapter, Region
 from tilelens.rules.lexicon import Lexicon, WordListError, lexicon_for
 from tilelens.rules.profile import Profile, ProfileError, demo_profile_dir, load_profile
@@ -232,6 +232,45 @@ class LiveSession(QObject):
         self.updated.emit(snap)
 
     # actions
+
+    def save_debug_dump(self) -> Path | None:
+        """Write the latest frame and what was read from it. Only ever called by the user."""
+        import json
+        import time
+
+        import cv2
+
+        ctrl = self.controller
+        if ctrl is None or ctrl.last_frame is None:
+            return None
+        folder = debug_dump_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        stem = folder / time.strftime("dump-%Y%m%d-%H%M%S")
+        cv2.imwrite(str(stem.with_suffix(".png")), ctrl.last_frame)
+        reading = self.recognizer.read(ctrl.last_frame)
+        info = {
+            "status": ctrl.snapshot.status.value,
+            "detail": ctrl.snapshot.detail,
+            "board": [
+                "".join(
+                    "!"
+                    if c.uncertain
+                    else "."
+                    if not c.letter
+                    else (c.letter.lower() if c.blank else c.letter)
+                    for c in row
+                )
+                for row in reading.cells
+            ],
+            "rack": [t.letter or ("?" if t.blank else "") for t in reading.rack],
+            "uncertain": [
+                {"row": r, "col": c, "reason": reading.cells[r][c].reason}
+                for r, c in reading.uncertain_cells
+            ],
+            "warnings": reading.warnings,
+        }
+        stem.with_suffix(".json").write_text(json.dumps(info, indent=2))
+        return stem.with_suffix(".png")
 
     def toggle_pause(self) -> bool:
         if self.controller is None:

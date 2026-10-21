@@ -102,6 +102,7 @@ class LiveController:
         self._confirmed_at: float | None = None
         self.last_confirmed: tuple[Board, Counter, list[str]] | None = None
         self.last_grid = None
+        self.last_frame: np.ndarray | None = None
         self.last_frame_size: tuple[int, int] | None = None
         self.last_read_ms: float | None = None
 
@@ -181,6 +182,7 @@ class LiveController:
             self._set(Status.PAUSED, "Paused")
             return
         frame = self.source.grab()
+        self.last_frame = frame
         if frame is None:
             self._not_visible(getattr(self.source, "last_error", None) or "Capture failed")
             return
