@@ -53,21 +53,23 @@ under the time one capture frame takes.
 This measures the time from a stable change in the fake game window (the last animation frame
 drawn) to the matching result being published to the panel. The full app runs in one process:
 the live controller at 10 Hz, the recognizer, the solver worker process, the overlay and the
-panel. In this mode frames come straight from the fake game window rather than from screen
-capture.
+panel. In this mode in-process mode frames come straight from the fake game window; in screen mode they come
+from real screen capture.
 
 | Mode | Position changes | Median | p95 | Worst | Stale results shown |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | in-process frames, 40 game events | 20 | 490 ms | 517 ms | 520 ms | 0 |
-| real screen capture, 12 game events | 5 | 509 ms | 573 ms | 573 ms | see note |
+| real screen capture, 40 game events | 20 | 572 ms | 619 ms | 680 ms | 0 |
 
 - Most of the time is spent waiting on purpose. A position must look the same on three
   consecutive frames at 10 Hz before it is trusted, which is about 300 ms plus up to one frame
   of alignment.
 - Reading takes about 25 ms per frame and the search takes a few ms on the demo list.
-- The real-screen row is from a single run made before a rack-recognition fix. It also showed
-  that the overlay never appeared in captures. Later screen runs were blocked because the
-  display was asleep (see `docs/manual-verification.md`).
+- The real-screen row (`--mode screen`) is the full app, including real screen capture of the
+  fake game window and the overlay drawing ghost tiles on screen. It sampled the ghost-tile
+  squares in 99 captures, and the largest mean difference from the game's own frame was 4.7,
+  which is animation noise; a captured ghost tile differs by tens. The overlay was never
+  captured.
 - Hardware and versions: Apple M5 Pro, 24 GB, macOS 26.6, Python 3.13.16, PySide6 6.12.0,
   OpenCV 5.0.0.93, NumPy 2.5.4, mss 10.2.0. The raw JSON is in
-  `benchmarks/results/e2e-inproc.json`.
+  `benchmarks/results/e2e-inproc.json` and `benchmarks/results/e2e-screen.json`.

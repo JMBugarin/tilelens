@@ -194,9 +194,9 @@ On synthetic boards across five themes, including one held out from all tuning:
 
 From a stable change in the fake game to the result in the panel:
 
-- About 0.5 s median and 0.52 s worst in-process.
-- About 0.5 s median in one real screen-capture run.
-- Zero stale results were shown.
+- 0.57 s median, 0.62 s p95 and 0.68 s worst with real screen capture, over 20 changes.
+- 0.49 s median in-process.
+- Zero stale results were shown in either mode.
 
 ## Limits
 
