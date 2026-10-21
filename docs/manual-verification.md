@@ -24,16 +24,13 @@ On an Apple M5 Pro with macOS 26.6 and Python 3.13.16:
 
 - **Real screen capture.** With Screen Recording granted to the launching terminal, a capture
   of the fake game window matched the rendered frame to a mean pixel difference of 1.2.
-- **Overlay exclusion.** In a 12-event on-screen run with the overlay drawing ghost tiles,
+- **Overlay exclusion.** In a 40-event on-screen run with the overlay drawing ghost tiles,
   sampled captures of the ghost-tile squares matched the game's own frame to within a mean
-  difference of 2.2 over 34 checks. The overlay was not in the capture.
-- **On-screen latency.** That run measured 509 ms median and 573 ms worst over five position
-  changes.
-  - The same run also found a rack letter misread, now fixed. Its latency numbers are kept
-    because the fix does not touch timing.
-  - Later on-screen runs could not happen: the display went to sleep, and TileLens does not
-    wake or unlock the screen. The in-process numbers in `docs/performance.md` use the same
-    pipeline apart from the capture call.
+  difference of 4.7 over 99 checks. The overlay was not in the capture.
+- **On-screen latency.** That run measured 572 ms median, 619 ms p95 and 680 ms worst over 20
+  position changes, with zero stale results shown.
+- **A bug found on screen.** An earlier on-screen run found a rack letter misread silently. It
+  is fixed and covered by tests.
 - **Sharing type.** A real Cocoa overlay window reported sharing type "none" after
   `exclude_from_capture`.
 

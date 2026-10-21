@@ -55,14 +55,17 @@ displays are added or removed, change geometry or change scale.
 Tested:
 
 - The overlay window's sharing type is set to none in a real Cocoa window.
+- In a 40-event run with real screen capture on macOS 26.6, the overlay drew ghost tiles over
+  the fake game window and never showed up in 99 sampled captures.
 - An overlay that leaks into a capture is never read as played tiles. Its squares come back
   uncertain or in an unknown tile color, so a leak can only cause Check tiles, never a wrong
   position.
 - In `suppress` mode the overlay is hidden for every capture and restored afterwards.
 
-Not verified here, because this environment has no Screen Recording permission:
+Not verified:
 
-- whether a real screen capture actually leaves the excluded overlay out on current macOS;
-- how much flicker `suppress` mode causes on screen.
+- other macOS versions, where capture exclusion may behave differently;
+- how much on-screen flicker `suppress` mode causes, since only how long the overlay stays
+  hidden was measured.
 
 See the manual checklist in `docs/manual-verification.md`.
