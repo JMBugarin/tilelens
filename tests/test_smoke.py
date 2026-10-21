@@ -6,5 +6,9 @@ def test_version():
     assert tilelens.__version__
 
 
-def test_main_runs():
-    assert main([]) == 0
+def test_version_flag(capsys):
+    import pytest
+
+    with pytest.raises(SystemExit):
+        main(["--version"])
+    assert "tilelens" in capsys.readouterr().out

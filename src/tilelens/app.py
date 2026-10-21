@@ -39,6 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     read.add_argument("--calibration", required=True)
     read.add_argument("--image", required=True)
 
+    sub.add_parser("demo", help="run against the built-in fake game (no screen capture needed)")
+
     imp = sub.add_parser("import-words", help="normalize a word list into the app data folder")
     imp.add_argument("path")
     imp.add_argument("--profile", help="filter to this profile's alphabet and pre-build the graph")
@@ -190,6 +192,9 @@ def cmd_import_words(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     args = build_parser().parse_args(argv)
     if args.command == "check-profile":
         return cmd_check_profile(args)
@@ -201,8 +206,13 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_calibrate(args)
     if args.command == "read":
         return cmd_read(args)
-    print("tilelens: the desktop app is not available yet")
-    return 0
+    if args.command == "demo":
+        from tilelens.ui.app_main import run
+
+        return run(demo=True)
+    from tilelens.ui.app_main import run
+
+    return run()
 
 
 if __name__ == "__main__":
