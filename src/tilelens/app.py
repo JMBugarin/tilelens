@@ -24,6 +24,21 @@ def build_parser() -> argparse.ArgumentParser:
     solve.add_argument("--rack", required=True, help="rack letters, '?' for a blank")
     solve.add_argument("--top", type=int, default=3)
 
+    cal = sub.add_parser("calibrate", help="learn a game's look from screenshots you label")
+    cal.add_argument("--profile", required=True)
+    cal.add_argument("--image", action="append", required=True, help="screenshot (repeatable)")
+    cal.add_argument(
+        "--board", action="append", required=True, help="text file with that screenshot's board"
+    )
+    cal.add_argument("--rack", action="append", required=True, help="rack letters, left to right")
+    cal.add_argument("--rect", required=True, help="rough board grid rectangle x,y,w,h in pixels")
+    cal.add_argument("--out", required=True)
+
+    read = sub.add_parser("read", help="read a screenshot with a saved calibration")
+    read.add_argument("--profile", required=True)
+    read.add_argument("--calibration", required=True)
+    read.add_argument("--image", required=True)
+
     imp = sub.add_parser("import-words", help="normalize a word list into the app data folder")
     imp.add_argument("path")
     imp.add_argument("--profile", help="filter to this profile's alphabet and pre-build the graph")
@@ -87,6 +102,77 @@ def cmd_solve(args) -> int:
     return 0
 
 
+def cmd_calibrate(args) -> int:
+    import cv2
+
+    from tilelens.rules.profile import ProfileError, load_profile
+    from tilelens.vision.grid import GridNotFound
+    from tilelens.vision.recognizer import CalibrationError, calibrate
+
+    if not (len(args.image) == len(args.board) == len(args.rack)):
+        print("error: give one --board and one --rack per --image", file=sys.stderr)
+        return 1
+    try:
+        profile = load_profile(args.profile)
+        rect = tuple(float(v) for v in args.rect.split(","))
+        if len(rect) != 4:
+            raise ValueError("--rect needs four numbers")
+        samples = []
+        for image, board, rack in zip(args.image, args.board, args.rack, strict=True):
+            img = cv2.imread(image)
+            if img is None:
+                raise ValueError(f"cannot read image {image}")
+            rows = [ln.strip() for ln in Path(board).read_text().splitlines() if ln.strip()]
+            samples.append((img, rows, rack))
+        cal = calibrate(samples, profile, board_hint=rect)
+    except (ProfileError, CalibrationError, GridNotFound, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    cal.save(args.out)
+    print(f"saved calibration with {len(cal.templates)} letters to {args.out}")
+    return 0
+
+
+def cmd_read(args) -> int:
+    import cv2
+
+    from tilelens.rules.board import rack_to_str
+    from tilelens.rules.profile import load_profile
+    from tilelens.vision.recognizer import Calibration, Recognizer
+
+    profile = load_profile(args.profile)
+    rec = Recognizer(Calibration.load(args.calibration), profile)
+    img = cv2.imread(args.image)
+    if img is None:
+        print(f"error: cannot read image {args.image}", file=sys.stderr)
+        return 1
+    reading = rec.read(img)
+    if not reading.visible:
+        print("board not visible")
+        return 2
+    for row in reading.cells:
+        line = ""
+        for c in row:
+            if c.uncertain:
+                line += "!"
+            elif c.letter is None:
+                line += "."
+            else:
+                line += c.letter.lower() if c.blank else c.letter
+        print(line)
+    print(
+        "rack:",
+        rack_to_str(reading.rack_counter()),
+        "(uncertain)" if reading.rack_uncertain else "",
+    )
+    for r, c in reading.uncertain_cells:
+        print(f"check row {r + 1}, col {c + 1}: {reading.cells[r][c].reason}")
+    for w in reading.warnings:
+        print("warning:", w)
+    print(f"read in {reading.elapsed * 1000:.1f} ms")
+    return 0 if reading.confident else 3
+
+
 def cmd_import_words(args) -> int:
     from tilelens.rules.lexicon import WordListError
     from tilelens.rules.profile import ProfileError, load_profile
@@ -111,6 +197,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_solve(args)
     if args.command == "import-words":
         return cmd_import_words(args)
+    if args.command == "calibrate":
+        return cmd_calibrate(args)
+    if args.command == "read":
+        return cmd_read(args)
     print("tilelens: the desktop app is not available yet")
     return 0
 
