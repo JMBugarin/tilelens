@@ -101,6 +101,9 @@ class LiveController:
         self._submitted_at: float | None = None
         self._confirmed_at: float | None = None
         self.last_confirmed: tuple[Board, Counter, list[str]] | None = None
+        self.last_grid = None
+        self.last_frame_size: tuple[int, int] | None = None
+        self.last_read_ms: float | None = None
 
     @property
     def snapshot(self) -> Snapshot:
@@ -189,6 +192,9 @@ class LiveController:
         if not changed and settled and not self._force:
             return
         reading = self.recognizer.read(frame)
+        self.last_grid = reading.grid
+        self.last_frame_size = (frame.shape[1], frame.shape[0])
+        self.last_read_ms = reading.elapsed * 1000
         if not reading.visible:
             self._not_visible("Board not found in the captured region")
             return
