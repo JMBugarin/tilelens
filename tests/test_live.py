@@ -1,4 +1,5 @@
 import copy
+import os
 import random
 import time
 
@@ -405,3 +406,34 @@ def test_solver_failure_is_reported(calibration):
     snap = h.settle(fix=False)
     assert snap.status == Status.CHECK and "Solver stopped" in snap.detail
     assert snap.result is None
+
+
+def test_solver_worker_exits_when_parent_dies(tmp_path):
+    import subprocess
+    import sys
+    import textwrap
+
+    code = textwrap.dedent(
+        f"""
+        import os, sys, time
+        from tilelens.state.worker import ProcessSolver
+
+        if __name__ == "__main__":
+            s = ProcessSolver({str(demo_profile_dir() / "demo_pocket.toml")!r})
+            s.wait_ready(60)
+            print(s._proc.pid, flush=True)
+            os._exit(0)
+        """
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    pid = int(out.stdout.strip().splitlines()[-1])
+    deadline = time.monotonic() + 10
+    alive = True
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            alive = False
+            break
+        time.sleep(0.1)
+    assert not alive

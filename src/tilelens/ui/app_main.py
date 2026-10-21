@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from tilelens.capture.source import CallableSource
@@ -117,6 +118,13 @@ def run(argv: list[str] | None = None, demo: bool = False) -> int:
         settings = Settings.load()
     shell = App(settings, demo=demo)
     app.aboutToQuit.connect(shell.shutdown)
+    import signal
+
+    signal.signal(signal.SIGTERM, lambda *_: app.quit())
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
+    wake = QTimer()
+    wake.timeout.connect(lambda: None)
+    wake.start(250)
     if shell.session.snapshot is None:
         shell.window.show_snapshot(None)
     return app.exec()
