@@ -315,6 +315,7 @@ def test_corrections_flow(calibration):
     letters = {t.letter for t in board.tiles() if not t.blank}
     missing = sorted(letters)[0]
     h.recognizer.cal.templates.pop(missing)
+    h.recognizer.cal.rack_templates.pop(missing, None)
     h.recognizer._rebuild_templates()
     snap = h.settle(fix=False)
     assert snap.status == Status.CHECK

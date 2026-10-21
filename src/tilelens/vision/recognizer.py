@@ -39,6 +39,8 @@ SCALE_CHANGED = "board size changed since calibration; recalibrate"
 
 
 LETTER_MIN_STRICT = 0.95
+CROSS_MIN = 0.90
+CROSS_MARGIN = 0.08
 
 
 def letter_ok(letter: str | None, s1: float, s2: float, strict: bool = False) -> bool:
@@ -95,6 +97,7 @@ class Calibration:
     blank_ink: np.ndarray | None
     values_expected: bool
     templates: dict[str, list[np.ndarray]] = field(default_factory=dict)
+    rack_templates: dict[str, list[np.ndarray]] = field(default_factory=dict)
     empty_glyphs: dict[str, list[np.ndarray]] = field(default_factory=dict)
     masks: list[tuple[int, int, int, int]] = field(default_factory=list)
     version: int = 1
@@ -105,8 +108,9 @@ class Calibration:
             bucket.append(vec.astype(np.float32))
             del bucket[:-4]
 
-    def add_template(self, letter: str, vec: np.ndarray) -> None:
-        bucket = self.templates.setdefault(letter, [])
+    def add_template(self, letter: str, vec: np.ndarray, rack: bool = False) -> None:
+        store = self.rack_templates if rack else self.templates
+        bucket = store.setdefault(letter, [])
         if any(float(t @ vec) > 0.985 for t in bucket):
             return
         bucket.append(vec.astype(np.float32))
@@ -133,6 +137,7 @@ class Calibration:
             "blank_ink": None if self.blank_ink is None else self.blank_ink.tolist(),
             "values_expected": self.values_expected,
             "templates": {k: [enc(v) for v in vs] for k, vs in self.templates.items()},
+            "rack_templates": {k: [enc(v) for v in vs] for k, vs in self.rack_templates.items()},
             "empty_glyphs": {k: [enc(v) for v in vs] for k, vs in self.empty_glyphs.items()},
             "masks": [list(m) for m in self.masks],
         }
@@ -161,6 +166,9 @@ class Calibration:
             blank_ink=None if d["blank_ink"] is None else np.array(d["blank_ink"], np.float32),
             values_expected=bool(d["values_expected"]),
             templates={k: [dec(s) for s in vs] for k, vs in d["templates"].items()},
+            rack_templates={
+                k: [dec(s) for s in vs] for k, vs in d.get("rack_templates", {}).items()
+            },
             empty_glyphs={k: [dec(s) for s in vs] for k, vs in d.get("empty_glyphs", {}).items()},
             masks=[tuple(m) for m in d.get("masks", [])],
             version=int(d.get("version", 1)),
@@ -296,32 +304,60 @@ class Recognizer:
         self._rebuild_templates()
 
     def _rebuild_templates(self) -> None:
-        letters, vecs = [], []
-        for letter, bucket in sorted(self.cal.templates.items()):
-            for v in bucket:
-                letters.append(letter)
-                vecs.append(v)
-        self._t_letters = np.array(letters)
-        self._t_matrix = np.array(vecs, np.float32) if vecs else np.zeros((0, GLYPH * GLYPH))
-        self.missing_letters = sorted(self.profile.alphabet - set(self.cal.templates))
-        self._strict = bool(self.missing_letters)
+        self._sets = {}
+        for name, store in (("board", self.cal.templates), ("rack", self.cal.rack_templates)):
+            letters, vecs = [], []
+            for letter, bucket in sorted(store.items()):
+                for v in bucket:
+                    letters.append(letter)
+                    vecs.append(v)
+            matrix = np.array(vecs, np.float32) if vecs else np.zeros((0, GLYPH * GLYPH))
+            self._sets[name] = (np.array(letters), matrix)
+        known = set(self.cal.templates) | set(self.cal.rack_templates)
+        self.missing_letters = sorted(self.profile.alphabet - known)
+        self._strict = {
+            "board": bool(self.profile.alphabet - set(self.cal.templates)),
+            "rack": bool(self.profile.alphabet - set(self.cal.rack_templates)),
+        }
 
-    def learn(self, letter: str, glyph: Glyph) -> None:
-        self.cal.add_template(letter, glyph.vec)
+    def learn(self, letter: str, glyph: Glyph, rack: bool = False) -> None:
+        self.cal.add_template(letter, glyph.vec, rack=rack)
         self._rebuild_templates()
 
-    def match(self, glyph: Glyph) -> tuple[str | None, float, float, tuple[str, ...]]:
-        if len(self._t_letters) == 0:
-            return None, 0.0, 0.0, ()
-        scores = self._t_matrix @ glyph.vec
+    def _scores(self, name: str, vec: np.ndarray) -> dict[str, float]:
+        letters, matrix = self._sets[name]
         best: dict[str, float] = {}
-        for letter, s in zip(self._t_letters, scores, strict=True):
-            if s > best.get(letter, -2.0):
-                best[str(letter)] = float(s)
-        ranked = sorted(best.items(), key=lambda kv: -kv[1])
-        first = ranked[0]
-        second = ranked[1][1] if len(ranked) > 1 else -1.0
-        return first[0], first[1], second, tuple(k for k, _ in ranked[:3])
+        if len(letters):
+            for letter, s in zip(letters, matrix @ vec, strict=True):
+                if s > best.get(letter, -2.0):
+                    best[str(letter)] = float(s)
+        return best
+
+    def match(self, glyph: Glyph, home: str = "board"):
+        """Best letter for a glyph, preferring templates captured from the same place.
+
+        Returns (letter, score, runner_up, candidates, same_source).
+        """
+        other = "rack" if home == "board" else "board"
+        same = self._scores(home, glyph.vec)
+        cross = self._scores(other, glyph.vec)
+        merged = {k: (v, True) for k, v in same.items()}
+        for k, v in cross.items():
+            if k not in merged:
+                merged[k] = (v, False)
+        if not merged:
+            return None, 0.0, 0.0, (), False
+        ranked = sorted(merged.items(), key=lambda kv: -kv[1][0])
+        letter, (s1, same_source) = ranked[0]
+        s2 = ranked[1][1][0] if len(ranked) > 1 else -1.0
+        return letter, s1, s2, tuple(k for k, _ in ranked[:3]), same_source
+
+    def accept(self, home: str, letter, s1: float, s2: float, same_source: bool) -> bool:
+        if letter is None:
+            return False
+        if same_source:
+            return letter_ok(letter, s1, s2, self._strict[home])
+        return s1 >= CROSS_MIN and s1 - s2 >= CROSS_MARGIN
 
     def grid_for(self, img: np.ndarray) -> Grid:
         h, w = img.shape[:2]
@@ -397,9 +433,9 @@ class Recognizer:
                 cell.state = tp.state if d_tile < MATCH else UNKNOWN
                 if cell.state == UNKNOWN:
                     cell.uncertain, cell.reason = True, "tile color not seen during calibration"
-                letter, s1, s2, cands = self.match(glyph)
+                letter, s1, s2, cands, same = self.match(glyph, "board")
                 cell.letter, cell.letter_score, cell.candidates = letter, s1, cands
-                if not letter_ok(letter, s1, s2, self._strict):
+                if not self.accept("board", letter, s1, s2, same):
                     cell.uncertain, cell.reason = True, "letter is unclear"
                 blank, unsure, why = self._blank_decision(glyph)
                 cell.blank = blank
@@ -463,21 +499,12 @@ class Recognizer:
                 if fix.blank and self.cal.blank_ink is None:
                     self.cal.blank_ink = glyph.ink.copy()
         if rack_fixes:
-            band, f = self._rack_band(img, reading.grid)
-            size = self.cal.rack_tile * f
-            blobs = find_tile_blobs(
-                img,
-                band,
-                self.cal.rack_proto.mean,
-                self.cal.rack_proto.radius * MATCH,
-                (size * 0.7, size * 1.35),
-                native=reading.grid.pitch_x,
-            )
+            blobs = self.rack_blobs(img, reading.grid)
             for i, letter in rack_fixes.items():
                 if i < len(blobs) and letter != BLANK:
                     glyph = extract_glyph(blobs[i].crop, blobs[i].ring)
                     if glyph is not None:
-                        self.cal.add_template(letter, glyph.vec)
+                        self.cal.add_template(letter, glyph.vec, rack=True)
         self._rebuild_templates()
 
     def _rack_band(self, img, grid: Grid):
@@ -487,10 +514,10 @@ class Recognizer:
         x0, y0, x1, y1 = self.cal.rack_band
         return (round(x0 * fx), round(y0 * fy), round(x1 * fx), round(y1 * fy)), (fx + fy) / 2
 
-    def _read_rack(self, img, grid) -> list[RackRead]:
+    def rack_blobs(self, img, grid):
         band, f = self._rack_band(img, grid)
         size = self.cal.rack_tile * f
-        blobs = find_tile_blobs(
+        return find_tile_blobs(
             img,
             band,
             self.cal.rack_proto.mean,
@@ -498,14 +525,17 @@ class Recognizer:
             (size * 0.7, size * 1.35),
             native=grid.pitch_x,
         )
+
+    def _read_rack(self, img, grid) -> list[RackRead]:
+        blobs = self.rack_blobs(img, grid)
         out = []
         for b in blobs:
             glyph = extract_glyph(b.crop, b.ring)
             if glyph is None or glyph.ink_fraction < 0.01:
                 out.append(RackRead(None, True, rect=b.rect))
                 continue
-            letter, s1, s2, _ = self.match(glyph)
-            unsure = not letter_ok(letter, s1, s2, self._strict)
+            letter, s1, s2, _, same = self.match(glyph, "rack")
+            unsure = not self.accept("rack", letter, s1, s2, same)
             out.append(
                 RackRead(letter, False, unsure, "letter is unclear" if unsure else "", b.rect, s1)
             )
@@ -580,6 +610,7 @@ def calibrate(
     tile_samples: list[np.ndarray] = []
     normal_ink, blank_ink, value_flags = [], [], []
     templates: list[tuple[str, np.ndarray]] = []
+    rack_templates: list[tuple[str, np.ndarray]] = []
     empty_glyph_samples: list[tuple[str, np.ndarray]] = []
     rack_rects, rack_rings = [], []
     keys = [
@@ -663,7 +694,7 @@ def calibrate(
             glyph = extract_glyph(b.crop, b.ring)
             if glyph is None:
                 raise CalibrationError(f"no letter found on rack tile '{ch}'")
-            templates.append((ch.upper(), glyph.vec))
+            rack_templates.append((ch.upper(), glyph.vec))
 
     sides = [(w + h) / 2 for _, _, w, h in rack_rects]
     tile_side = float(np.median(sides))
@@ -695,10 +726,23 @@ def calibrate(
     )
     for letter, vec in templates:
         cal.add_template(letter, vec)
+    rec = Recognizer(cal, profile)
+    for img, _truth, rack in parsed:
+        letters = [ch for ch in rack if not ch.isspace()]
+        blobs = rec.rack_blobs(img, grid)
+        if len(blobs) != len(letters):
+            continue
+        for b, ch in zip(blobs, letters, strict=True):
+            glyph = extract_glyph(b.crop, b.ring)
+            if ch != BLANK and glyph is not None:
+                cal.add_template(ch.upper(), glyph.vec, rack=True)
+    if not cal.rack_templates:
+        for letter, vec in rack_templates:
+            cal.add_template(letter, vec, rack=True)
     for key, vec in empty_glyph_samples:
         cal.add_empty_glyph(key, vec)
 
-    rec = Recognizer(cal, profile)
+    rec._rebuild_templates()
     for img, truth, _rack in parsed:
         reading = rec.read(img)
         wrong = 0

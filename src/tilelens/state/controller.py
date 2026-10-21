@@ -170,14 +170,19 @@ class LiveController:
         return self._change
 
     def tick(self) -> None:
+        """Capture and read first, then accept search results, so a result is only published
+        if the newest frame still shows the position it was computed for."""
         now = self.clock()
-        self._drain(now)
+        self._observe(now)
+        self._drain(self.clock())
+
+    def _observe(self, now: float) -> None:
         if self.paused:
             self._set(Status.PAUSED, "Paused")
             return
         frame = self.source.grab()
         if frame is None:
-            self._not_visible("Capture failed")
+            self._not_visible(getattr(self.source, "last_error", None) or "Capture failed")
             return
         detector = self._watch_regions(frame)
         changed = detector.update(frame)
