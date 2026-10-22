@@ -33,6 +33,7 @@ class Theme:
     gap: float = 0.08
     radius: float = 0.14
     show_values: bool = True
+    value_top: bool = False
     premium_labels: bool = True
     held_out: bool = False
     extra: dict = field(default_factory=dict)
@@ -148,6 +149,32 @@ THEMES: dict[str, Theme] = {
             radius=0.05,
             show_values=False,
             premium_labels=False,
+        ),
+        Theme(
+            name="harbor",
+            window=(214, 226, 236),
+            header=(120, 96, 40),
+            header_text=(250, 245, 240),
+            board=(222, 236, 246),
+            grid=(255, 255, 255),
+            square=(222, 236, 246),
+            premium=_premium(
+                (240, 214, 170), (130, 200, 240), (180, 236, 190), (110, 150, 240), (200, 150, 220)
+            ),
+            premium_text=(255, 255, 255),
+            tile=(150, 140, 30),
+            tile_edge=(110, 100, 20),
+            letter=(255, 255, 255),
+            value=(255, 255, 255),
+            blank_letter=(60, 230, 250),
+            tentative_tile=(190, 180, 80),
+            tentative_edge=(40, 40, 220),
+            recent_tile=(170, 120, 40),
+            rack_panel=(90, 110, 120),
+            font=("sans", 800),
+            gap=0.05,
+            radius=0.18,
+            value_top=True,
         ),
         Theme(
             name="ember",

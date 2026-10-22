@@ -256,7 +256,8 @@ def draw_tile(
         )
         if theme.show_values and not blank:
             value = str(profile.letter_values.get(letter, 0))
-            _text(target, value, (x + w * 0.82, y + h * 0.8), h * 0.16, UI_FONT, theme.value, 0.12)
+            vy = y + h * (0.2 if theme.value_top else 0.8)
+            _text(target, value, (x + w * 0.82, vy), h * 0.16, UI_FONT, theme.value, 0.12)
     if alpha < 1.0:
         cv2.addWeighted(target, alpha, img, 1 - alpha, 0, dst=img)
 
