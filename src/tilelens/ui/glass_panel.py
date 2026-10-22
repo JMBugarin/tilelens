@@ -161,6 +161,7 @@ class GlassPanel(QWidget):
     pause_clicked = Signal()
     rescan_clicked = Signal()
     check_clicked = Signal()
+    calibrate_clicked = Signal()
 
     def __init__(self):
         super().__init__(
@@ -208,9 +209,13 @@ class GlassPanel(QWidget):
         self.pause_btn.clicked.connect(self.pause_clicked)
         self.rescan_btn.clicked.connect(self.rescan_clicked)
         self.check_btn.clicked.connect(self.check_clicked)
+        self.cal_btn = QPushButton("Calibrate")
+        self.cal_btn.setToolTip("Learn from the screen as it is now; type your rack")
+        self.cal_btn.clicked.connect(self.calibrate_clicked)
         row.addWidget(self.pause_btn)
         row.addWidget(self.rescan_btn)
         row.addWidget(self.check_btn)
+        row.addWidget(self.cal_btn)
         row.addStretch(1)
         row.addWidget(self.updated)
         lay.addLayout(row)

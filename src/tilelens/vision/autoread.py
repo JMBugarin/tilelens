@@ -48,6 +48,9 @@ RING_OK = 16.0
 UNIFORM = 9.0
 BLANK_MARK = 18.0
 BLANK_CHROMA = 18.0
+FIX_MATCH = 0.9
+UNMARKED_LETTER = 0.9
+LABEL_INK = 25.0
 LABEL_MATCH = 0.85
 LABEL_CONTRAST = 35.0
 LETTER_CONTRAST = 45.0
@@ -286,6 +289,9 @@ class ViewReader:
             else calibration.rack_proto.mean[:3]
         )
         self.locates = 0
+        # what the player said a square or rack tile shows, kept with the glyph it was said of
+        self.board_fixes: dict[tuple[int, int], list[tuple[np.ndarray, str | None, bool]]] = {}
+        self.rack_fixes: list[tuple[np.ndarray, str]] = []
 
     def _still_aligned(self, img: np.ndarray, view: BoardView) -> bool:
         if (img.shape[1], img.shape[0]) != getattr(self, "_size", None):
@@ -341,6 +347,7 @@ class ViewReader:
             return reading
         grid = view.grid
         rack = self._read_rack(img, view)
+        rack_glyphs = self.last_rack_glyphs
         board_img, board_grid = work_frame(img, grid)
         rows, cols = self.profile.height, self.profile.width
         covered = _covered_by(grid, rows, cols, [t.rect for t in rack if t.rect is not None])
@@ -362,6 +369,7 @@ class ViewReader:
         reading.features = feats
         reading.crops = [x if x is not None else np.zeros((CROP, CROP, 3), np.uint8) for x in crops]
         reading.view = view
+        reading.rack_glyphs = rack_glyphs
         return reading
 
     def _read_cell(self, r: int, c: int, feat: np.ndarray, crop_: np.ndarray) -> CellRead:
@@ -373,18 +381,36 @@ class ViewReader:
         key = self.keys[r][c]
         if glyph is None or glyph.ink_fraction < 0.012:
             return CellRead() if ring_ok else CellRead(state=UNSEEN)
+        for vec, fixed, blank in self.board_fixes.get((r, c), ()):
+            if float(vec @ glyph.vec) > FIX_MATCH:
+                return CellRead(fixed, blank, COMMITTED) if fixed else CellRead()
         contrast = float(np.linalg.norm(glyph.ink - feat[:3]))
         letter, s1, s2, cands, same = self.rec.match(glyph, "board")
         label_score = max(
             (float(t @ glyph.vec) for t in self.cal.empty_glyphs.get(key, ())), default=0.0
         )
-        label = (label_score > LABEL_MATCH and label_score >= s1) or (
-            ring_ok and self.profile.premium_at(r, c) is not None and contrast < LABEL_CONTRAST
+        premium = self.profile.premium_at(r, c) is not None
+        # tiles carry a point value and square labels do not; only an unmarked glyph that
+        # clearly is a letter can be a tile here (a blank), and that is asked about
+        label_ink = self.cal.label_ink
+        unmarked = (
+            premium
+            and self.cal.values_expected
+            and not glyph.value_mark
+            and not glyph.touches_edge
+            and (label_ink is None or float(np.linalg.norm(glyph.ink - label_ink)) < LABEL_INK)
+        )
+        label = (
+            (label_score > LABEL_MATCH and (label_score >= s1 or not glyph.value_mark))
+            or (ring_ok and premium and contrast < LABEL_CONTRAST)
+            or (ring_ok and unmarked and s1 < UNMARKED_LETTER)
         )
         if label and ring_ok:
             return CellRead()
         if glyph.touches_edge:
             return CellRead(state=UNSEEN)
+        if ring_ok and unmarked:
+            return CellRead(letter, True, COMMITTED, True, "square label or blank tile?", s1, cands)
         if self.rec.accept("board", letter, s1, s2, same):
             blank, unsure, why = self._blank_decision(glyph)
             return CellRead(letter, blank, COMMITTED, unsure, why, s1, cands)
@@ -395,10 +421,18 @@ class ViewReader:
     def _read_rack(self, img: np.ndarray, view: BoardView | None = None) -> list[RackRead]:
         radius = max(18.0, self.cal.rack_proto.radius * 3)
         out = []
+        self.last_rack_glyphs = []
         for b in find_rack(img, self.profile, self.rack_lab, radius, view, self.expected):
             glyph = extract_glyph(b.crop, b.ring)
+            self.last_rack_glyphs.append(None if glyph is None else glyph.vec)
             if glyph is None or glyph.ink_fraction < 0.01:
                 out.append(RackRead(None, True, rect=b.rect))
+                continue
+            fixed = max(
+                ((float(v @ glyph.vec), ch) for v, ch in self.rack_fixes), default=(0.0, "")
+            )
+            if fixed[0] > FIX_MATCH:
+                out.append(RackRead(fixed[1], False, False, "", b.rect, fixed[0]))
                 continue
             letter, s1, s2, _, same = self.rec.match(glyph, "rack")
             unsure = not self.rec.accept("rack", letter, s1, s2, same)
@@ -417,6 +451,10 @@ class ViewReader:
             crop_ = reading.crops[r * cols + c]
             feat = reading.features[r, c]
             glyph = extract_glyph(crop_, feat)
+            if glyph is not None:
+                self.board_fixes.setdefault((r, c), []).append(
+                    (glyph.vec, fix.letter if fix.played else None, fix.blank)
+                )
             if fix.letter is None:
                 if glyph is not None:
                     self.cal.add_empty_glyph(self.keys[r][c], glyph.vec)
@@ -425,15 +463,12 @@ class ViewReader:
                 self.cal.add_template(fix.letter, glyph.vec)
                 if fix.blank and glyph.value_ink is not None:
                     self.cal.blank_value_ink = glyph.value_ink
-        if rack_fixes:
-            blobs = find_rack(
-                img, self.profile, self.rack_lab, 22.0, getattr(reading, "view", None)
-            )
-            for i, letter in rack_fixes.items():
-                if i < len(blobs) and letter != BLANK:
-                    glyph = extract_glyph(blobs[i].crop, blobs[i].ring)
-                    if glyph is not None:
-                        self.cal.add_template(letter, glyph.vec, rack=True)
+        glyphs = getattr(reading, "rack_glyphs", None) or []
+        for i, letter in (rack_fixes or {}).items():
+            vec = glyphs[i] if i < len(glyphs) else None
+            if vec is not None and letter != BLANK:
+                self.rack_fixes.append((vec, letter))
+                self.cal.add_template(letter, vec, rack=True)
         self.rec._rebuild_templates()
 
     learn_from_corrections = learn

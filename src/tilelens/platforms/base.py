@@ -54,6 +54,9 @@ class PlatformAdapter(ABC):
         """Hide a native window from screen capture. Returns False if not possible."""
         return False
 
+    def include_in_capture(self, win_id: int) -> None:  # noqa: B027
+        """Capture one of this process's own windows anyway (the built-in fake game)."""
+
     def show_on_all_spaces(self, win_id: int) -> bool:
         """Keep a window visible over full-screen apps, where the OS supports it."""
         return False

@@ -89,8 +89,9 @@ def _calibrate_on_window(window: FakeGameWindow, grab, profile, seeds) -> object
     _pump(0.2)
     geo = original.geometry
     fh, fw = samples[0][0].shape[:2]
-    sx = fw / window.view.width()
-    sy = fh / window.view.height()
+    # captured pixels per rendered game pixel (2 on Retina)
+    sx = fw / geo.size[0]
+    sy = fh / geo.size[1]
     hint = (
         geo.origin[0] * sx,
         geo.origin[1] * sy,
@@ -132,6 +133,7 @@ def run(
     _pump(0.5)
     adapter = get_adapter() if mode == "screen" else None
     if mode == "screen":
+        adapter.include_in_capture(int(window.winId()))
         if adapter.screen_permission() is False:
             report.notes.append("Screen Recording permission missing; nothing was captured")
             window.close()

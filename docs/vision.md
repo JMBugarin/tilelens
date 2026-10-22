@@ -56,6 +56,15 @@ or uncovered, and no rectangle is drawn. You only type the rack.
   panel, a popup or the floating rack, or whose glyph runs off the square, is marked unseen
   rather than empty. The search treats unseen squares as unavailable, so suggestions are the
   best among the visible squares.
+- **Corrections stick.** What you enter in the correction grid is kept with the glyph it was
+  entered for, per square and per rack tile, so the next frames read it the same way even when
+  the match is not strong enough on its own. A square whose tile is remembered from an earlier
+  confirmed reading keeps that letter (played tiles never change). An unclear square's guess
+  is not part of the position's signature, so a guess that changes from frame to frame does
+  not restart the reading.
+- **Square labels.** Tiles carry point values and labels do not. A glyph in the label ink
+  color without a value mark on a premium square is a label unless it is clearly a letter; then
+  it is asked about (a blank tile also has no value) instead of being read as a tile.
 - **Learning.** Letter shapes come from the typed rack. Premium-square labels are learned by
   clustering the glyphs that repeat on squares of one type (glyphs with a point value are
   tiles, not labels). The blank's value mark color comes from a `?` in the rack.
