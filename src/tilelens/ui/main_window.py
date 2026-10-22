@@ -166,6 +166,8 @@ class MainWindow(QMainWindow):
         self.dump_btn.clicked.connect(self.save_dump)
         session.updated.connect(self.show_snapshot)
         session.message.connect(self.show_message)
+        session.selection_changed.connect(lambda _i: self.refresh_selection())
+        session.panel.check_clicked.connect(self.open_corrections)
 
         self.shortcuts = {}
         actions = {
