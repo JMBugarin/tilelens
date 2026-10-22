@@ -28,7 +28,7 @@ UNKNOWN = "unknown"
 UNSEEN = "unseen"
 
 MATCH = 3.0
-LETTER_MIN = 0.8
+LETTER_MIN = 0.85
 LETTER_MARGIN = 0.05
 INK_SPLIT = 12.0
 MAX_TEMPLATES = 8
@@ -40,8 +40,8 @@ SCALE_CHANGED = "board size changed since calibration; recalibrate"
 
 
 LETTER_MIN_STRICT = 0.95
-CROSS_MIN = 0.90
-CROSS_MARGIN = 0.08
+CROSS_MIN = 0.92
+CROSS_MARGIN = 0.04
 
 
 def letter_ok(letter: str | None, s1: float, s2: float, strict: bool = False) -> bool:
@@ -104,7 +104,16 @@ class Calibration:
     auto: bool = False
     blank_value_ink: np.ndarray | None = None
     label_ink: np.ndarray | None = None
+    # background colors of played tiles that differ from their square's own color
+    tile_backgrounds: list[np.ndarray] = field(default_factory=list)
     version: int = 1
+
+    def add_tile_background(self, lab: np.ndarray, close: float = 10.0) -> bool:
+        lab = np.asarray(lab, np.float32)[:3]
+        if any(float(np.linalg.norm(lab - t)) < close for t in self.tile_backgrounds):
+            return False
+        self.tile_backgrounds.append(lab)
+        return True
 
     def add_empty_glyph(self, key: str, vec: np.ndarray) -> None:
         bucket = self.empty_glyphs.setdefault(key, [])
@@ -146,6 +155,7 @@ class Calibration:
             "masks": [list(m) for m in self.masks],
             "auto": self.auto,
             "label_ink": None if self.label_ink is None else self.label_ink.tolist(),
+            "tile_backgrounds": [t.tolist() for t in self.tile_backgrounds],
             "blank_value_ink": (
                 None if self.blank_value_ink is None else self.blank_value_ink.tolist()
             ),
@@ -181,6 +191,7 @@ class Calibration:
             empty_glyphs={k: [dec(s) for s in vs] for k, vs in d.get("empty_glyphs", {}).items()},
             masks=[tuple(m) for m in d.get("masks", [])],
             auto=bool(d.get("auto", False)),
+            tile_backgrounds=[np.array(t, np.float32) for t in d.get("tile_backgrounds", [])],
             label_ink=(
                 None if d.get("label_ink") is None else np.array(d["label_ink"], np.float32)
             ),

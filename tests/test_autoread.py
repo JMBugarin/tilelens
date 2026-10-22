@@ -10,7 +10,7 @@ from tilelens.vision.autoread import ViewReader, add_screen, calibrate_auto
 from tilelens.vision.locate import BoardNotFound, locate_board
 from tilelens.vision.recognizer import UNSEEN, CalibrationError
 
-THEME = "mosaic"
+THEME = "apricot"
 
 
 @pytest.fixture(scope="module")

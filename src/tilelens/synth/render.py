@@ -232,6 +232,7 @@ def draw_tile(
     alpha: float = 1.0,
     square_fill=None,
     square_label: str | None = None,
+    letter_color=None,
 ):
     x, y, w, h = rect
     radius = round(w * theme.radius)
@@ -249,6 +250,8 @@ def draw_tile(
         _rounded(target, rect, radius, theme.tentative_edge, max(2, w // 14))
     if letter:
         color = theme.blank_letter if blank else theme.letter
+        if letter_color is not None:
+            color = letter_color
         _text(
             target,
             letter,
@@ -261,7 +264,7 @@ def draw_tile(
         if theme.show_values and (not blank or theme.tile_takes_square):
             value = "0" if blank else str(profile.letter_values.get(letter, 0))
             vy = y + h * (0.2 if theme.value_top else 0.8)
-            color = theme.blank_mark if blank else theme.value
+            color = theme.blank_mark if blank else (letter_color or theme.value)
             _text(target, value, (x + w * 0.82, vy), h * 0.16, UI_FONT, color, 0.12)
         if square_label:
             _text(
@@ -345,7 +348,7 @@ def render(scene: Scene) -> tuple[np.ndarray, dict]:
         rect = geo.cell_rect(r, c, gap * 0.6)
         alpha = scene.fade.get((r, c), 1.0)
         sq_fill = sq_label = None
-        if theme.tile_takes_square:
+        if theme.tile_takes_square and state != TENTATIVE:
             prem = p.premium_at(r, c)
             sq_fill = (250, 250, 250) if prem is None else _premium_color(theme, prem)
             sq_label = None if prem is None else _premium_label(prem)
@@ -361,7 +364,10 @@ def render(scene: Scene) -> tuple[np.ndarray, dict]:
             rack_labels.append(None)
             continue
         blank = item == BLANK
-        draw_tile(img, slot, None if blank else item, False, COMMITTED, theme, p)
+        draw_tile(
+            img, slot, None if blank else item, False, COMMITTED, theme, p,
+            letter_color=theme.rack_letter,
+        )  # fmt: skip
         rack_labels.append({"letter": None if blank else item, "blank": blank})
 
     if scene.drag is not None:

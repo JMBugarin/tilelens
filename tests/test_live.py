@@ -203,18 +203,17 @@ def test_opponent_animation_clears_immediately_and_searches_once(calibration):
     assert not h.violations
 
 
-def test_drag_and_tentative_tiles_wait_without_searching(calibration):
+def test_drag_and_tentative_tiles_keep_the_suggestion_without_searching(calibration):
     h = Harness(calibration)
-    h.settle()
+    shown = h.settle().pid
     searches = h.ctrl.searches_started
-    statuses = set()
     for _ in h.game.place_best(frames_per_tile=3):
         h.tick()
-        statuses.add((h.ctrl.snapshot.status, h.ctrl.snapshot.detail))
-        assert h.ctrl.snapshot.result is None
+        assert h.ctrl.snapshot.result is not None and h.ctrl.snapshot.pid == shown
     h.tick(8)
-    assert h.ctrl.snapshot.status == Status.READING
+    assert h.ctrl.snapshot.status == Status.READY
     assert h.ctrl.snapshot.detail == WAITING
+    assert h.ctrl.snapshot.pid == shown
     assert h.ctrl.searches_started == searches
     h.run(h.game.submit())
     snap = h.settle()

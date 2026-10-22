@@ -7,12 +7,12 @@ from tilelens.rules.board import WALL_CELL, Board
 from tilelens.state.controller import WAITING, LiveController, Status
 from tilelens.state.memory import BoardMemory, Coverage
 from tilelens.state.worker import InlineSolver
-from tilelens.synth.render import COMMITTED
+from tilelens.synth.render import COMMITTED, TENTATIVE
 from tilelens.synth.scenes import demo_engine, random_scene
 from tilelens.synth.views import ViewSpec, render_view, with_appearance
 from tilelens.vision.autoread import ViewReader, calibrate_auto
 
-THEME = "mosaic"
+THEME = "apricot"
 
 
 def rows_board(rows):
@@ -148,17 +148,19 @@ def test_change_while_zoomed_limits_moves_to_visible_squares(setup):
             assert visible[t.row][t.col]
 
 
-def test_tiles_taken_from_the_rack_wait_for_submission(setup):
+def test_tiles_taken_from_the_rack_keep_the_suggestion(setup):
     ctrl, source, solver, scene = make(setup)
     source.frame = render_view(scene, WHOLE)[0]
-    assert settle(ctrl).status == Status.READY
+    shown = settle(ctrl)
+    assert shown.status == Status.READY
     letter = next(t for t in scene.rack if t)
     scene.rack[scene.rack.index(letter)] = None
     spot = next((r, c) for r in range(3, 10) for c in range(3, 10) if (r, c) not in scene.tiles)
-    scene.tiles[spot] = (letter, False, COMMITTED)
+    scene.tiles[spot] = (letter, False, TENTATIVE)
     source.frame = render_view(scene, WHOLE)[0]
     snap = settle(ctrl)
-    assert (snap.status, snap.detail) == (Status.READING, WAITING)
+    assert (snap.status, snap.detail) == (Status.READY, WAITING)
+    assert snap.pid == shown.pid and snap.result is shown.result
     assert len(solver.submitted) == 1
 
 
@@ -212,3 +214,31 @@ def test_corrections_stick_across_frames(setup):
     source.frame = render_view(scene, ViewSpec(zoom=0.73, center=(0.51, 0.5)))[0]
     snap = settle(ctrl, 4)
     assert (snap.status, snap.pid) == (Status.READY, pid), snap.detail
+
+
+def test_panning_and_zooming_never_drop_the_suggestion(setup):
+    ctrl, source, solver, scene = make(setup)
+    source.frame = render_view(scene, WHOLE)[0]
+    shown = settle(ctrl)
+    assert shown.status == Status.READY, shown.detail
+    path = [(1.3, (0.4, 0.4)), (1.6, (0.45, 0.42)), (2.0, (0.5, 0.45)), (1.6, (0.55, 0.5))]
+    for zoom, center in path + path[::-1]:
+        source.frame = render_view(scene, ViewSpec(zoom=zoom, center=center))[0]
+        for _ in range(3):
+            ctrl.tick()
+            snap = ctrl.snapshot
+            assert snap.status == Status.READY, snap.detail
+            assert snap.result is not None
+    assert len(solver.submitted) == 1
+
+
+def test_a_new_tile_in_view_clears_the_suggestion(setup):
+    ctrl, source, solver, scene = make(setup)
+    source.frame = render_view(scene, WHOLE)[0]
+    settle(ctrl)
+    known = sorted(setup[2].templates)
+    spot = next((r, c) for r in range(3, 10) for c in range(3, 10) if (r, c) not in scene.tiles)
+    scene.tiles[spot] = (known[0], False, COMMITTED)
+    source.frame = render_view(scene, ZOOMED)[0]
+    ctrl.tick()
+    assert ctrl.snapshot.result is None

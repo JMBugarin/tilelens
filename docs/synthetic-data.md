@@ -27,6 +27,11 @@ ground-truth labels.
 | candy | uni | rounded tiles |
 | paper | sans, light | dark tiles on white, no premium labels, no point values |
 | ember | italic | **held out**: never used to tune the recognizer |
+| mosaic | sans, heavy | tiles take their square's color, labels and values in the top corners |
+| apricot | sans, black | cream board filling the window, white tiles that take premium colors, orange rack tiles with white letters, unsubmitted tiles in the rack color; used by the zoomed-view tests |
+
+`render_tile_chart` draws a panel with one rack-style tile per letter in alphabetical order and
+the blank last, the kind of tile-set screen some games have.
 
 Text is drawn with the fonts built into OpenCV (`cv2.FontFace`), so no font files are
 added to the project.

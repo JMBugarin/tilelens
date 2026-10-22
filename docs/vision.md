@@ -69,6 +69,39 @@ or uncovered, and no rectangle is drawn. You only type the rack.
   clustering the glyphs that repeat on squares of one type (glyphs with a point value are
   tiles, not labels). The blank's value mark color comes from a `?` in the rack.
 
+## Learning every letter from a tile chart
+
+Some games have a screen that lists the whole tile set: one tile per letter in alphabetical
+order and the blank last. After the first calibration, open that screen and press Capture
+again, then Learn. TileLens finds the rack-colored tiles, orders them by rows, checks there
+is one per letter (plus an optional blank), refuses a chart whose tiles repeat a shape, and
+learns every letter in the game's own font. The alphabet order is the profile's letters
+sorted.
+
+### Measured accuracy on the look-alike theme
+
+Synthetic zoomed, panned and covered views (`apricot` and `mosaic` themes, 80 views each), after
+one typed rack and the tile chart, with the player answering Check tiles as they come up:
+
+| Views | Board tiles read | Flagged | Wrong |
+| --- | --- | --- | --- |
+| first 20 | 89–90% | 10% | 0 |
+| next 20 | 95–96% | 4–5% | 0 |
+| last 40 | 96–98% | 2–4% | 0 |
+
+Before the chart, with only the typed rack, about 21% of board tiles were read and the rest
+flagged. What raised accuracy without wrong reads:
+
+- Matching board glyphs against rack or chart shapes needs a score of 0.92 and a lead of 0.04;
+  board shapes kept from confirmed positions are then matched like for like.
+- A blank is told apart by its value mark: a normal value is drawn in the letter's color, so
+  its pixels lie between the letter and tile colors; a blank's mark does not.
+- Tile background colors are learned. A glyph on a background that is neither the square's
+  own color nor a known tile color is covered by something (asked about once if it carries a
+  point value, as a tile in a new color would).
+- A square whose corner shows a different uniform color is partly covered and is not read.
+- Labels are only learned from squares showing their own color.
+
 ## Reading a frame
 
 For each square, color and glyph evidence are combined:
