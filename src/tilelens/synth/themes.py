@@ -38,6 +38,7 @@ class Theme:
     blank_mark: Color = (240, 108, 142)
     in_rotation: bool = True
     premium_labels: bool = True
+    rack_letter: Color | None = None
     held_out: bool = False
     extra: dict = field(default_factory=dict)
 
@@ -206,6 +207,38 @@ THEMES: dict[str, Theme] = {
             value_top=True,
             tile_takes_square=True,
             in_rotation=False,
+        ),
+        Theme(
+            # cream board that fills the window, colored tiles on premium squares, orange rack
+            # tiles with white letters, values at the top right
+            name="apricot",
+            window=(202, 230, 251),
+            header=(240, 110, 150),
+            header_text=(255, 255, 255),
+            board=(202, 230, 251),
+            grid=(255, 255, 255),
+            square=(202, 230, 251),
+            premium=_premium(
+                (252, 228, 183), (114, 210, 248), (178, 244, 189), (127, 162, 241), (210, 170, 240)
+            ),
+            premium_text=(255, 255, 255),
+            tile=(102, 142, 239),
+            tile_edge=(200, 200, 200),
+            letter=(40, 34, 30),
+            value=(60, 56, 52),
+            blank_letter=(40, 34, 30),
+            tentative_tile=(102, 142, 239),
+            tentative_edge=(102, 142, 239),
+            recent_tile=(250, 250, 250),
+            rack_panel=(90, 98, 110),
+            font=("sans", 900),
+            letter_scale=0.66,
+            gap=0.06,
+            radius=0.18,
+            value_top=True,
+            tile_takes_square=True,
+            in_rotation=False,
+            rack_letter=(255, 255, 255),
         ),
         Theme(
             name="ember",

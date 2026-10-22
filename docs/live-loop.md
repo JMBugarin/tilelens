@@ -61,10 +61,20 @@ display is captured unless you pick a region. The change check then covers the w
   - *Partial view · zoom out briefly*: some squares are unknown. They are walls for the search,
     so every move shown is legal and scored correctly, but it is only the best among the
     squares in view. Zooming out once fixes this.
-- **Placing tiles** where placed and submitted tiles look the same: when the rack is a subset
-  of the confirmed rack and new tiles appear in view, the loop waits instead of searching.
-- **Unclear letters** on a square whose tile is remembered are settled by memory when the
-  top match agrees, and the glyph is learned at the new zoom.
+- **Steady results.** While a result is shown, a new frame that contradicts nothing keeps it
+  in view: zooming, panning, unclear reads of known tiles, and tiles the player moves out of
+  the rack (dragged, or placed but not submitted) do not clear it. The panel then says the
+  suggestion stays until submit. A contradiction clears it on that frame: a tile that changed
+  or vanished, a new tile while the rack is unchanged (someone else moved), or a newly
+  highlighted tile (just played).
+- **Revealed squares.** When panning reveals squares that were unknown and the board gains
+  only those, the search runs again in the background and the old result stays until the new
+  one is ready.
+- **Unsubmitted tiles** are recognized when they are drawn in the rack tile's color.
+- **Remembered tiles** settle a read of the same square when it is unclear, or when it is a
+  lookalike whose runner-up candidates include the remembered letter (G read as O after a
+  zoom). The glyph is then learned as the remembered letter at the new zoom. Tiles removed
+  from the board mean a new game: memory and square-level corrections are cleared.
 
 ## Guarantees and how they are tested
 
@@ -74,8 +84,8 @@ after every tick, and fails if a shown result's ID differs from the ID of what i
 
 - **Opponent move with a 4-frame fade:** the preview clears on the first changed frame, and
   exactly one search runs, for the final position.
-- **Drag and tentative placement:** the loop waits with no search, then shows the new result
-  after submit.
+- **Drag and tentative placement:** the suggestion stays in view with no search, then the
+  new result shows after submit.
 - **Recall and rack shuffle:** the cached result returns, with no new search.
 - **Two positions while a slow search runs:** the older result is counted as stale and
   dropped.
@@ -86,7 +96,9 @@ after every tick, and fails if a shown result's ID differs from the ID of what i
 - **Worker process:** submitting three positions back to back delivers only the newest.
 
 `tests/test_tracking.py` covers memory rules, zooming in on a confirmed board (same result, no
-new search), a change while zoomed in (moves only on squares in view) and tile placement.
+new search), a pan and zoom path during which the result never leaves Ready, a new tile in
+view clearing the result at once, a change while zoomed in (moves only on squares in view),
+placement keeping the suggestion, and corrections that stick.
 
 ## Known limits
 

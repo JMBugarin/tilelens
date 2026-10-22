@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from tilelens.solver.movegen import Move
-from tilelens.state.controller import Snapshot, Status
+from tilelens.state.controller import WAITING, Snapshot, Status
 from tilelens.state.memory import Coverage
 from tilelens.ui.cards import describe
 from tilelens.ui.glass import AMBER, CYAN, GREEN, square_name
@@ -245,6 +245,10 @@ class GlassPanel(QWidget):
             msg = snap.detail or "No legal placement."
         elif not ready:
             msg = snap.detail if snap.detail != snap.status.value else ""
+        elif snap.detail == WAITING:
+            msg = "Placing tiles: this suggestion stays until you submit."
+        elif snap.detail == "Updating":
+            msg = "Updating for newly seen squares."
         elif snap.coverage == Coverage.PARTIAL:
             msg = "Zoom out briefly so every square can be checked."
         else:

@@ -150,3 +150,31 @@ def random_view(rng: random.Random, size=(960, 640)) -> ViewSpec:
         color = rng.choice([(150, 70, 120), (60, 60, 60), (240, 240, 240), (90, 140, 230)])
         panels.append(((px, py, pw, ph), color, rng.choice(["", "34", "Nice!", "Turn 3"])))
     return ViewSpec(size, zoom, center, panels)
+
+
+def render_tile_chart(
+    profile: Profile, theme: Theme | str, size: tuple[int, int] = (660, 500), per_row: int = 7
+) -> np.ndarray:
+    """A panel listing one rack-style tile per letter in alphabetical order, the blank last."""
+    from tilelens.synth.render import COMMITTED, UI_FONT, draw_tile
+
+    theme = THEMES[theme] if isinstance(theme, str) else theme
+    W, H = size
+    img = np.full((H, W, 3), theme.window, np.uint8)
+    cv2.rectangle(img, (8, 8), (W - 9, H - 9), (255, 255, 255), -1)
+    letters = sorted(profile.alphabet) + ([None] if profile.blanks else [])
+    rows = (len(letters) + per_row - 1) // per_row
+    tile = min((W - 40) / (per_row * 1.15), (H - 60) / (rows * 1.5))
+    step_x, step_y = tile * 1.15, tile * 1.5
+    for i, letter in enumerate(letters):
+        r, c = divmod(i, per_row)
+        in_row = min(per_row, len(letters) - r * per_row)
+        x0 = (W - in_row * step_x) / 2 + c * step_x
+        y0 = 40 + r * step_y
+        rect = (round(x0), round(y0), round(tile), round(tile))
+        draw_tile(
+            img, rect, letter, False, COMMITTED, theme, profile, letter_color=theme.rack_letter
+        )
+        count = str(profile.distribution.get(letter or "?", 0))
+        _text(img, count, (x0 + tile / 2, y0 + tile * 1.22), tile * 0.18, UI_FONT, theme.tile)
+    return img

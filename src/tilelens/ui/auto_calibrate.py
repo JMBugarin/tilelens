@@ -19,13 +19,15 @@ from PySide6.QtWidgets import (
 from tilelens.rules.profile import Profile
 from tilelens.ui.calibrate_dialog import to_qimage
 from tilelens.vision.autoread import add_screen, calibrate_auto, rack_tiles
+from tilelens.vision.chart import chart_tiles, learn_chart, looks_like_chart
 from tilelens.vision.locate import BoardNotFound, BoardView, locate_board
 from tilelens.vision.recognizer import Calibration, CalibrationError
 
 STEPS = (
     "TileLens finds the board from its colors, so it does not need to be centered or whole.\n"
-    "Type the letters in your rack from left to right ('?' for a blank) and press Learn. "
-    "Letters you have not typed yet are learned later from the correction grid."
+    "Type the letters in your rack from left to right ('?' for a blank) and press Learn.\n"
+    "Then, if the game has a screen listing every tile (one per letter, A to Z), open it, "
+    "press Capture again and Learn: every letter is learned at once."
 )
 
 
@@ -123,6 +125,16 @@ class AutoCalibrationDialog(QDialog):
 
     def show_frame(self, frame: np.ndarray) -> None:
         self.frame = frame
+        self.chart = looks_like_chart(frame, self.profile)
+        if self.chart:
+            tiles = chart_tiles(frame, self.profile)
+            self.preview.set_frame(frame, None, [t.rect for t in tiles])
+            self.found.setText(
+                f"Tile chart found: {len(tiles)} tiles. Press Learn to learn every letter."
+            )
+            self.rack_edit.setEnabled(False)
+            return
+        self.rack_edit.setEnabled(True)
         try:
             view = locate_board(frame, self.profile)
         except BoardNotFound as exc:
@@ -145,6 +157,21 @@ class AutoCalibrationDialog(QDialog):
         self.show_frame(frame)
 
     def run(self) -> bool:
+        if self.chart:
+            if self.previous is None:
+                self.status.setText(
+                    "Calibrate on the board first (type your rack), then learn from the chart."
+                )
+                return False
+            cal = copy.deepcopy(self.previous)
+            try:
+                learn_chart(cal, self.frame, self.profile)
+            except CalibrationError as exc:
+                self.status.setText(f"Could not read the chart: {exc}")
+                return False
+            self.result = cal
+            self.accept()
+            return True
         rack = self.rack_edit.text().strip()
         if not rack:
             self.status.setText("Type the rack first.")

@@ -33,6 +33,7 @@ from tilelens.vision.locate import (
 )
 from tilelens.vision.recognizer import (
     COMMITTED,
+    TENTATIVE,
     UNSEEN,
     Calibration,
     CalibrationError,
@@ -47,7 +48,9 @@ from tilelens.vision.recognizer import (
 RING_OK = 16.0
 UNIFORM = 9.0
 BLANK_MARK = 18.0
-BLANK_CHROMA = 18.0
+BLANK_OFF_LINE = 15.0
+TILE_BACKGROUND = 14.0
+CORNER_COVERED = 30.0
 FIX_MATCH = 0.9
 UNMARKED_LETTER = 0.9
 LABEL_INK = 25.0
@@ -156,6 +159,15 @@ def _label_clusters(glyphs: list[np.ndarray]) -> list[np.ndarray]:
     return members[:4]
 
 
+def _learn_tile_backgrounds(cal: Calibration, seen: list[tuple[np.ndarray, np.ndarray]]) -> None:
+    """Keep tile colors seen on at least two squares, so a lone panel corner is not one."""
+    colors = [col for col, _ in seen]
+    for col in colors:
+        support = sum(1 for o in colors if float(np.linalg.norm(o - col)) < TILE_BACKGROUND)
+        if support >= 2:
+            cal.add_tile_background(col)
+
+
 def rack_tiles(frame: np.ndarray, profile: Profile, view: BoardView | None = None) -> list[Blob]:
     """Rack tiles found by the profile's rack tile color."""
     app = profile.appearance
@@ -178,14 +190,20 @@ def calibrate_auto(frame: np.ndarray, profile: Profile, rack: str) -> Calibratio
     keys = [
         [premium_key(profile, r, c) for c in range(profile.width)] for r in range(profile.height)
     ]
+    blobs = rack_tiles(frame, profile, view)
+    under_rack = _covered_by(grid, profile.height, profile.width, [b.rect for b in blobs])
     by_key: dict[str, list[np.ndarray]] = {}
+    tile_backgrounds: list[np.ndarray] = []
     empty_feats: dict[str, list[np.ndarray]] = {}
     for r in range(profile.height):
         for c in range(profile.width):
-            if not view.visible[r, c]:
+            if not view.visible[r, c] or under_rack[r, c]:
                 continue
             feat, crop_ = cell_sample(board_img, board_grid, r, c)
             if np.linalg.norm(feat[:3] - expected[r, c]) >= RING_OK:
+                glyph = extract_glyph(crop_, feat)
+                if glyph is not None and glyph.value_mark and not glyph.touches_edge:
+                    tile_backgrounds.append((feat[:3], glyph.vec))
                 continue
             glyph = extract_glyph(crop_, feat)
             if glyph is None:
@@ -194,7 +212,6 @@ def calibrate_auto(frame: np.ndarray, profile: Profile, rack: str) -> Calibratio
                 by_key.setdefault(keys[r][c], []).append((glyph.vec, glyph.ink, glyph.value_mark))
 
     letters = [ch for ch in rack.upper() if not ch.isspace()]
-    blobs = rack_tiles(frame, profile, view)
     if len(blobs) != len(letters):
         raise CalibrationError(
             f"found {len(blobs)} rack tiles but {len(letters)} letters were typed"
@@ -236,6 +253,13 @@ def calibrate_auto(frame: np.ndarray, profile: Profile, rack: str) -> Calibratio
     )
     for ch, glyph in rack_glyphs:
         cal.add_template(ch, glyph.vec, rack=True)
+    _learn_tile_backgrounds(cal, tile_backgrounds)
+    if not cal.tile_backgrounds:
+        # a single tile counts when its letter clearly is one of the typed rack letters
+        rack_vecs = [g.vec for _, g in rack_glyphs]
+        for col, vec in tile_backgrounds:
+            if rack_vecs and max(float(v @ vec) for v in rack_vecs) > 0.85:
+                cal.add_tile_background(col)
     label_inks = []
     for key, items in by_key.items():
         if cal.values_expected:
@@ -251,6 +275,32 @@ def calibrate_auto(frame: np.ndarray, profile: Profile, rack: str) -> Calibratio
     if label_inks:
         cal.label_ink = np.median(np.array(label_inks), axis=0).astype(np.float32)
     return cal
+
+
+def _corner_covered(crop_: np.ndarray, feat: np.ndarray) -> bool:
+    """Part of the square is hidden under something of another color (a panel corner)."""
+    size = crop_.shape[0]
+    a, b = round(size * 0.14), round(size * 0.4)
+    lab = to_lab(crop_)
+    ring = feat[:3]
+    for ys, xs in (
+        (slice(a, b), slice(a, b)),
+        (slice(a, b), slice(size - b, size - a)),
+        (slice(size - b, size - a), slice(a, b)),
+        (slice(size - b, size - a), slice(size - b, size - a)),
+    ):
+        corner = np.median(lab[ys, xs].reshape(-1, 3), axis=0)
+        if float(np.linalg.norm(corner - ring)) > CORNER_COVERED:
+            return True
+    return False
+
+
+def _off_line(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
+    """Distance from color p to the segment between colors a and b."""
+    a = a.astype(np.float32)
+    ab = b.astype(np.float32) - a
+    t = float(np.clip(np.dot(p - a, ab) / max(1e-6, float(np.dot(ab, ab))), 0.0, 1.0))
+    return float(np.linalg.norm(p - (a + t * ab)))
 
 
 def _covered_by(grid, rows: int, cols: int, rects) -> np.ndarray:
@@ -320,16 +370,27 @@ class ViewReader:
         self.locates += 1
         return self.view
 
-    def _blank_decision(self, glyph) -> tuple[bool, bool, str]:
+    def _rack_colored(self, feat: np.ndarray) -> bool:
+        return float(np.linalg.norm(feat[:3] - self.rack_lab[:3])) < TILE_BACKGROUND
+
+    def _tile_background(self, feat: np.ndarray) -> bool:
+        if self._rack_colored(feat):
+            return True
+        return any(
+            float(np.linalg.norm(feat[:3] - t)) < TILE_BACKGROUND for t in self.cal.tile_backgrounds
+        )
+
+    def _blank_decision(self, glyph, background) -> tuple[bool, bool, str]:
         if glyph.value_mark and glyph.value_ink is not None:
-            if self.cal.blank_value_ink is not None:
-                if float(np.linalg.norm(glyph.value_ink - self.cal.blank_value_ink)) < BLANK_MARK:
-                    return True, False, ""
+            # a normal value is drawn in the letter's color, so its pixels mix letter ink and
+            # tile background; a blank's mark in its own color lies off that line. The learned
+            # blank mark color only confirms, since the background tints it.
+            if _off_line(glyph.value_ink, glyph.ink, background) <= BLANK_OFF_LINE:
                 return False, False, ""
-            chroma = float(np.hypot(glyph.value_ink[1], glyph.value_ink[2]))
-            if chroma > BLANK_CHROMA:
-                return True, True, "possible blank"
-            return False, False, ""
+            known = self.cal.blank_value_ink
+            if known is not None and float(np.linalg.norm(glyph.value_ink - known)) < BLANK_MARK:
+                return True, False, ""
+            return True, True, "possible blank"
         if self.cal.values_expected:
             return True, True, "possible blank"
         return False, False, ""
@@ -377,6 +438,8 @@ class ViewReader:
         ring_ok = ring_d < RING_OK
         if ring_ok and float(crop_.std()) < 6:
             return CellRead()
+        if _corner_covered(crop_, feat):
+            return CellRead(state=UNSEEN)
         glyph = extract_glyph(crop_, feat)
         key = self.keys[r][c]
         if glyph is None or glyph.ink_fraction < 0.012:
@@ -402,20 +465,34 @@ class ViewReader:
         )
         label = (
             (label_score > LABEL_MATCH and (label_score >= s1 or not glyph.value_mark))
-            or (ring_ok and premium and contrast < LABEL_CONTRAST)
+            or (
+                ring_ok
+                and premium
+                and contrast < LABEL_CONTRAST
+                and not (glyph.value_mark and self.cal.values_expected)
+            )
             or (ring_ok and unmarked and s1 < UNMARKED_LETTER)
         )
         if label and ring_ok:
             return CellRead()
         if glyph.touches_edge:
             return CellRead(state=UNSEEN)
+        if not ring_ok and not self._tile_background(feat):
+            # neither the square's color nor a known tile color: a tile in a new color (it
+            # carries a point value) is asked about once; anything else covers the square
+            if glyph.value_mark or not self.cal.values_expected:
+                why = "tile color not seen yet"
+                return CellRead(letter, False, COMMITTED, True, why, s1, cands)
+            return CellRead(state=UNSEEN)
         if ring_ok and unmarked:
             return CellRead(letter, True, COMMITTED, True, "square label or blank tile?", s1, cands)
+        # a tile in the rack's color is still being placed
+        state = TENTATIVE if self._rack_colored(feat) else COMMITTED
         if self.rec.accept("board", letter, s1, s2, same):
-            blank, unsure, why = self._blank_decision(glyph)
-            return CellRead(letter, blank, COMMITTED, unsure, why, s1, cands)
+            blank, unsure, why = self._blank_decision(glyph, feat[:3])
+            return CellRead(letter, blank, state, unsure, why, s1, cands)
         if contrast >= LETTER_CONTRAST:
-            return CellRead(letter, False, COMMITTED, True, "letter is unclear", s1, cands)
+            return CellRead(letter, False, state, True, "letter is unclear", s1, cands)
         return CellRead() if ring_ok else CellRead(state=UNSEEN)
 
     def _read_rack(self, img: np.ndarray, view: BoardView | None = None) -> list[RackRead]:
@@ -456,10 +533,14 @@ class ViewReader:
                     (glyph.vec, fix.letter if fix.played else None, fix.blank)
                 )
             if fix.letter is None:
-                if glyph is not None:
+                # only a square showing its own color has its printed label in view
+                own = float(np.linalg.norm(feat[:3] - self.expected[r, c])) < RING_OK
+                if glyph is not None and own:
                     self.cal.add_empty_glyph(self.keys[r][c], glyph.vec)
                 continue
             if glyph is not None:
+                if float(np.linalg.norm(feat[:3] - self.expected[r, c])) >= RING_OK:
+                    self.cal.add_tile_background(feat[:3])
                 self.cal.add_template(fix.letter, glyph.vec)
                 if fix.blank and glyph.value_ink is not None:
                     self.cal.blank_value_ink = glyph.value_ink
@@ -472,6 +553,38 @@ class ViewReader:
         self.rec._rebuild_templates()
 
     learn_from_corrections = learn
+
+    def new_game(self) -> None:
+        """Corrections tied to squares belong to one game."""
+        self.board_fixes.clear()
+
+    def consolidate(self, reading: Reading, per_letter: int = 3, confirmed: bool = False) -> int:
+        """Keep board shapes of letters from a fully confirmed reading.
+
+        Board tiles are then matched against board tiles, which is stricter and more accurate
+        than matching them against rack or chart shapes. Only a few per letter are kept.
+        """
+        if not (confirmed or reading.confident) or reading.crops is None:
+            return 0
+        cols = self.profile.width
+        added = 0
+        for r, row in enumerate(reading.cells):
+            for c, cell in enumerate(row):
+                if not cell.letter or cell.blank or cell.uncertain or cell.state == UNSEEN:
+                    continue
+                if len(self.cal.templates.get(cell.letter, ())) >= per_letter:
+                    continue
+                glyph = extract_glyph(reading.crops[r * cols + c], reading.features[r, c])
+                if glyph is None or glyph.touches_edge:
+                    continue
+                feat = reading.features[r, c]
+                if float(np.linalg.norm(feat[:3] - self.expected[r, c])) >= RING_OK:
+                    self.cal.add_tile_background(feat[:3])
+                self.cal.add_template(cell.letter, glyph.vec)
+                added += 1
+        if added:
+            self.rec._rebuild_templates()
+        return added
 
 
 def add_screen(cal: Calibration, frame: np.ndarray, profile: Profile, rack: str) -> None:

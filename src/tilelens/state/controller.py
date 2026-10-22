@@ -18,6 +18,7 @@ from tilelens.vision.recognizer import (
     COMMITTED,
     RECENT,
     SCALE_CHANGED,
+    TENTATIVE,
     UNSEEN,
     CellFix,
     Reading,
@@ -112,6 +113,7 @@ class LiveController:
         self.last_frame_size: tuple[int, int] | None = None
         self.last_read_ms: float | None = None
         self.memory = BoardMemory()
+        self._refining: tuple[str, dict] | None = None
         self.last_reading: Reading | None = None
 
     @property
@@ -218,6 +220,7 @@ class LiveController:
         if not reading.visible:
             self._not_visible("Board not found in the captured region")
             return
+        self._confirm_remembered(reading)
         sig = reading.signature()
         if sig == self._candidate_sig:
             self._count += 1
@@ -229,6 +232,8 @@ class LiveController:
         if self._count >= self.stable_frames:
             self._force = False
             self._on_stable(reading, frame, sig, now)
+        elif self._showing() and self._consistent(reading):
+            pass  # zooming, panning or placing: the shown result still holds
         else:
             detail = WAITING if reading.tentative_squares() else "Reading"
             self._set(Status.READING, detail)
@@ -244,8 +249,7 @@ class LiveController:
         self._check_reading = None
         rack = reading.rack_counter()
         if self._placing(reading, rack):
-            self.solver.cancel()
-            self._set(Status.READING, WAITING)
+            self._wait_for_submit()
             return
         if reading.tentative_squares():
             shrunk = (
@@ -255,43 +259,127 @@ class LiveController:
             if shrunk or not any(
                 reading.cells[r][c].uncertain for r, c in reading.tentative_squares()
             ):
-                self.solver.cancel()
-                self._set(Status.READING, WAITING)
+                self._wait_for_submit()
                 return
-        if not reading.confident:
-            self._confirm_remembered(reading, frame)
+        self._confirm_remembered(reading, frame)
         if not reading.confident:
             self._check_reading = reading
             self.solver.cancel()
             self._set(Status.CHECK, self._check_detail(reading), reading=reading)
             return
         order = [BLANK if t.blank else (t.letter or "") for t in reading.rack]
+        consolidate = getattr(self.recognizer, "consolidate", None)
+        if consolidate is not None:
+            consolidate(reading)
         self._confirm(reading.placed(), rack, order, now)
 
-    def _confirm_remembered(self, reading: Reading, frame) -> None:
-        """Played tiles never change, so a remembered tile settles an unclear read of it.
+    def _confirm_remembered(self, reading: Reading, frame=None) -> None:
+        """Played tiles never change, so a remembered tile settles a read of the same square.
 
-        When the best match agrees, the glyph is learned too, which teaches the letter at the
-        current zoom.
+        That covers an unclear read, and a confident one whose runner-up letters include the
+        remembered one (a lookalike at a new zoom). With a frame, the glyph is learned as the
+        remembered letter, which teaches it at the current zoom.
         """
         mem = self.memory.board
         if mem is None or (mem.width, mem.height) != (len(reading.cells[0]), len(reading.cells)):
             return
         learn = {}
-        for r, c in reading.uncertain_cells:
-            cell = reading.cells[r][c]
-            known = mem.cells[r][c]
-            if mem.is_unknown(r, c) or known is None or cell.letter is None:
-                continue
-            letter, blank = known
-            if cell.letter == letter and cell.letter_score >= REMEMBERED_MIN:
-                learn[(r, c)] = (letter, blank)
-            state = cell.state if cell.state in (COMMITTED, RECENT) else COMMITTED
-            reading.cells[r][c] = replace(
-                cell, letter=letter, blank=blank, state=state, uncertain=False, reason=""
-            )
-        if learn:
+        for r, row in enumerate(reading.cells):
+            for c, cell in enumerate(row):
+                known = mem.cells[r][c]
+                if mem.is_unknown(r, c) or known is None or cell.letter is None:
+                    continue
+                if cell.state == TENTATIVE:
+                    continue
+                letter, blank = known
+                if not cell.uncertain and (cell.letter, cell.blank) == known:
+                    continue
+                if not cell.uncertain and letter not in cell.candidates:
+                    continue  # a clearly different tile: let the change be seen
+                if cell.letter != letter or cell.letter_score >= REMEMBERED_MIN:
+                    learn[(r, c)] = (letter, blank)
+                state = cell.state if cell.state in (COMMITTED, RECENT) else COMMITTED
+                reading.cells[r][c] = replace(
+                    cell, letter=letter, blank=blank, state=state, uncertain=False, reason=""
+                )
+        if learn and frame is not None:
             self.recognizer.learn_from_corrections(frame, reading, learn)
+
+    def _tiles_removed(self, board: Board) -> bool:
+        mem = self.memory.board
+        if mem is None or (mem.width, mem.height) != (board.width, board.height):
+            return False
+        return any(
+            mem.cells[r][c] is not None
+            and not mem.is_unknown(r, c)
+            and not board.is_unknown(r, c)
+            and board.cells[r][c] is None
+            for r in range(board.height)
+            for c in range(board.width)
+        )
+
+    def _showing(self) -> bool:
+        snap = self._snapshot
+        return snap.status == Status.READY and snap.result is not None and snap.board is not None
+
+    def _wait_for_submit(self) -> None:
+        """Tiles are being placed: keep the suggestion in view until they are submitted."""
+        self.solver.cancel()
+        self._refining = None
+        if self._showing():
+            snap = self._snapshot
+            self._set(
+                Status.READY,
+                WAITING,
+                result=snap.result,
+                published_at=snap.published_at,
+                solve_ms=snap.solve_ms,
+                **self._keep(snap),
+            )
+        else:
+            self._set(Status.READING, WAITING)
+
+    def _consistent(self, reading: Reading) -> bool:
+        """Nothing in view contradicts the shown position.
+
+        Squares that were unknown, unclear squares and tiles the player is placing from the
+        rack do not count as contradictions; a tile that appeared otherwise, or one that
+        changed or vanished, does.
+        """
+        shown = self._snapshot.board
+        rows = len(reading.cells)
+        if shown is None or (shown.height, shown.width) != (rows, len(reading.cells[0])):
+            return False
+        rack = reading.rack_counter()
+        before = self._snapshot.rack or Counter()
+        if not reading.rack_uncertain and rack != before and rack - before:
+            return False
+        taken = max(0, sum(before.values()) - sum(rack.values()))
+        added = 0
+        unclear: list[tuple[int, int]] = []
+        for r, row in enumerate(reading.cells):
+            for c, cell in enumerate(row):
+                if cell.state == UNSEEN or shown.is_unknown(r, c):
+                    continue
+                was = shown.cells[r][c]
+                if cell.uncertain:
+                    # an unclear read of a known tile is fine; a new tile-like glyph is not
+                    if was is None and cell.letter is not None:
+                        unclear.append((r, c))
+                    continue
+                now = (cell.letter, cell.blank) if cell.letter else None
+                if now == was:
+                    continue
+                if was is None and now is not None and cell.state != RECENT:
+                    added += 1  # placed by the player; a highlighted tile was just played
+                    continue
+                return False
+        # while tiles are out of the rack, unclear new squares are those tiles: placed, or in
+        # the player's hand overlapping up to four squares. With the rack unchanged a new tile
+        # is someone else's move.
+        if unclear and (taken == 0 or len(unclear) > 4 * taken):
+            return False
+        return added <= taken
 
     def _placing(self, reading: Reading, rack: Counter) -> bool:
         """Tiles moved from the rack onto the board but not yet submitted.
@@ -332,6 +420,12 @@ class LiveController:
 
     def _confirm(self, board: Board, rack: Counter, order: list[str], now: float) -> None:
         self._confirmed_rack_size = sum(rack.values())
+        if self._tiles_removed(board):
+            # tiles never leave the board during a game, so this is a new game
+            self.memory.forget()
+            new_game = getattr(self.recognizer, "new_game", None)
+            if new_game is not None:
+                new_game()
         board, coverage = self.memory.update(board, rack)
         self.last_confirmed = (board, Counter(rack), order)
         self._confirmed_at = now
@@ -350,7 +444,34 @@ class LiveController:
         self._submitted_at = now
         self.searches_started += 1
         self.solver.submit(pid, board.to_rows(), rack_to_str(rack))
+        if self._showing() and self._refines(board, rack):
+            snap = self._snapshot
+            self._refining = (pid, base)
+            self._set(
+                Status.READY,
+                "Updating",
+                result=snap.result,
+                published_at=snap.published_at,
+                solve_ms=snap.solve_ms,
+                **self._keep(snap),
+            )
+            return
+        self._refining = None
         self._set(Status.SOLVING, "Solving", **base)
+
+    def _refines(self, board: Board, rack: Counter) -> bool:
+        """The new board only reveals squares the shown one did not know; same rack."""
+        shown = self._snapshot.board
+        if self._snapshot.rack != rack or (shown.width, shown.height) != (
+            board.width,
+            board.height,
+        ):
+            return False
+        return all(
+            shown.is_unknown(r, c) or board.cells[r][c] == shown.cells[r][c]
+            for r in range(board.height)
+            for c in range(board.width)
+        )
 
     def _drain(self, now: float) -> None:
         outcomes = self.solver.poll()
@@ -365,6 +486,19 @@ class LiveController:
                 while len(self.cache) > CACHE_SIZE:
                     self.cache.popitem(last=False)
             snap = self._snapshot
+            refining = self._refining
+            if refining is not None and outcome.pid == refining[0] and res is not None:
+                self._refining = None
+                if snap.status == Status.READY and snap.detail == "Updating":
+                    self._set(
+                        Status.READY,
+                        "",
+                        result=res,
+                        published_at=now,
+                        solve_ms=res.elapsed * 1000,
+                        **refining[1],
+                    )
+                    continue
             if snap.status != Status.SOLVING or outcome.pid != snap.pid:
                 self.stale_discarded += 1
                 continue
@@ -402,6 +536,9 @@ class LiveController:
             return False
         frame = self._stable_frame
         self.recognizer.learn_from_corrections(frame, reading, board_fixes, rack_fixes)
+        consolidate = getattr(self.recognizer, "consolidate", None)
+        if consolidate is not None:
+            consolidate(reading, confirmed=True)
         fixes = {k: as_fix(v) for k, v in board_fixes.items()}
         cells = []
         for r, row in enumerate(reading.cells):

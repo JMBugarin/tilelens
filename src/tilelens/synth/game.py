@@ -55,6 +55,9 @@ class FakeGame:
         rack = Counter(t for t in self.rack if t is not None)
         for letter, blank in self.tentative.values():
             rack[BLANK if blank else letter] += 1
+        if self.drag is not None:
+            # a tile in the player's hand has not been played
+            rack[self.drag[2] or BLANK] += 1
         return self.board, rack
 
     # rendering
