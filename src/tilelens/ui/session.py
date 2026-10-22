@@ -18,6 +18,7 @@ from tilelens.state.worker import InlineSolver, ProcessSolver
 from tilelens.ui.overlay import OverlayWindow
 from tilelens.ui.preview import CellMapper
 from tilelens.ui.settings import Settings
+from tilelens.vision.autoread import ViewReader
 from tilelens.vision.recognizer import Calibration, Recognizer
 
 
@@ -53,7 +54,7 @@ class LiveSession(QObject):
         self.settings = settings
         self.adapter = adapter
         self._custom_source = source
-        self.region_provider = region_provider or (lambda: self.settings.region_obj)
+        self.region_provider = region_provider or self.capture_region
         self.use_process = use_process
         self.profile: Profile = load_profile(
             settings.profile or demo_profile_dir() / "demo_garden.toml"
@@ -114,12 +115,17 @@ class LiveSession(QObject):
         if cal.profile_fingerprint != self.profile.fingerprint():
             self.message.emit("Saved calibration is for a different profile; please recalibrate.")
             return
-        self.recognizer = Recognizer(cal, self.profile)
+        self.recognizer = self._make_reader(cal)
+
+    def _make_reader(self, cal: Calibration):
+        if cal.auto and self.profile.appearance is not None:
+            return ViewReader(cal, self.profile)
+        return Recognizer(cal, self.profile)
 
     def set_calibration(self, cal: Calibration) -> None:
         cal.save(self.calibration_path())
         self.settings.calibration = str(self.calibration_path())
-        self.recognizer = Recognizer(cal, self.profile)
+        self.recognizer = self._make_reader(cal)
         if self.controller is not None:
             self.controller.set_recognizer(self.recognizer)
         else:
@@ -132,6 +138,18 @@ class LiveSession(QObject):
             self.controller.rescan()
         self.refresh_overlay()
 
+    def capture_region(self) -> Region | None:
+        """The selected region, or the whole main display when the board is found by color."""
+        region = self.settings.region_obj
+        if region is not None or self.profile.appearance is None:
+            return region
+        app = QGuiApplication.instance()
+        screen = app.primaryScreen() if app is not None else None
+        if screen is None:
+            return None
+        g = screen.geometry()
+        return Region(g.x(), g.y(), g.width(), g.height())
+
     def source_frame(self) -> np.ndarray | None:
         return self._make_source().grab()
 
@@ -139,7 +157,7 @@ class LiveSession(QObject):
         if self._custom_source is not None:
             src = self._custom_source
         else:
-            region = self.settings.region_obj
+            region = self.capture_region()
             if region is None or self.adapter is None:
                 return _NullSource()
             src = PermissionGate(ScreenSource(self.adapter, region), self.adapter)

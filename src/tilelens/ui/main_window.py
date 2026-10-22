@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from tilelens.state.controller import Snapshot, Status
+from tilelens.state.memory import COVERAGE_NOTES, Coverage
 from tilelens.ui.cards import ResultCard
 from tilelens.ui.corrections import CorrectionDialog
 from tilelens.ui.preview import CellMapper, paint_board, paint_move
@@ -199,7 +200,11 @@ class MainWindow(QMainWindow):
             if self.session.lexicon is None:
                 text = "Choose a word list"
             elif self.session.recognizer is None:
-                text = "Select the region, then calibrate"
+                text = (
+                    "Calibrate: type your rack"
+                    if self.session.profile.appearance is not None
+                    else "Select the region, then calibrate"
+                )
             else:
                 text = "Starting"
             self.status.setText("Setup")
@@ -214,7 +219,11 @@ class MainWindow(QMainWindow):
             card.set_move(moves[i] if i < len(moves) else None)
         if snap.status == Status.READY and snap.result is not None:
             if moves:
-                self.label.setText(snap.result.label.capitalize())
+                label = snap.result.label.capitalize()
+                if snap.coverage == Coverage.PARTIAL:
+                    label = f"{snap.result.label.capitalize()} among the squares in view"
+                note = COVERAGE_NOTES.get(snap.coverage)
+                self.label.setText(f"{label} · {note}" if note else label)
             else:
                 self.label.setText(snap.detail or "No legal placement")
         else:

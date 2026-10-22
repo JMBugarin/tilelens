@@ -153,6 +153,13 @@ def _label_clusters(glyphs: list[np.ndarray]) -> list[np.ndarray]:
     return members[:4]
 
 
+def rack_tiles(frame: np.ndarray, profile: Profile, view: BoardView | None = None) -> list[Blob]:
+    """Rack tiles found by the profile's rack tile color."""
+    app = profile.appearance
+    tile_lab = to_lab(np.array(app.rack_tile, np.uint8).reshape(1, 1, 3)).reshape(3)
+    return find_rack(frame, profile, tile_lab, 22.0, view, _expected_lab(profile))
+
+
 def calibrate_auto(frame: np.ndarray, profile: Profile, rack: str) -> Calibration:
     """Learn from one screen: the board is found from its colors; only the rack is typed."""
     app = profile.appearance
@@ -183,9 +190,8 @@ def calibrate_auto(frame: np.ndarray, profile: Profile, rack: str) -> Calibratio
             else:
                 by_key.setdefault(keys[r][c], []).append((glyph.vec, glyph.ink, glyph.value_mark))
 
-    tile_lab = to_lab(np.array(app.rack_tile, np.uint8).reshape(1, 1, 3)).reshape(3)
     letters = [ch for ch in rack.upper() if not ch.isspace()]
-    blobs = find_rack(frame, profile, tile_lab, 22.0, view, expected)
+    blobs = rack_tiles(frame, profile, view)
     if len(blobs) != len(letters):
         raise CalibrationError(
             f"found {len(blobs)} rack tiles but {len(letters)} letters were typed"
@@ -263,6 +269,8 @@ def _covered_by(grid, rows: int, cols: int, rects) -> np.ndarray:
 class ViewReader:
     """Locates the board each time it moves and reads every visible square."""
 
+    tracks_view = True
+
     def __init__(self, calibration: Calibration, profile: Profile):
         self.cal = calibration
         self.profile = profile
@@ -288,7 +296,6 @@ class ViewReader:
         rng = np.random.default_rng(len(rows))
         pick = rng.choice(len(rows), size=min(60, len(rows)), replace=False)
         ok = premium_seen = premium_ok = 0
-        plain = self.expected[0, 0] * 0
         for i in pick:
             r, c = int(rows[i]), int(cols[i])
             feat, _ = cell_sample(img, view.grid, r, c)
@@ -297,7 +304,6 @@ class ViewReader:
             if self.profile.premium_at(r, c) is not None:
                 premium_seen += 1
                 premium_ok += d < RING_OK
-        del plain
         return ok >= 0.45 * len(pick) and (premium_seen < 3 or premium_ok >= 0.6 * premium_seen)
 
     def locate(self, img: np.ndarray) -> BoardView:
@@ -429,6 +435,8 @@ class ViewReader:
                     if glyph is not None:
                         self.cal.add_template(letter, glyph.vec, rack=True)
         self.rec._rebuild_templates()
+
+    learn_from_corrections = learn
 
 
 def add_screen(cal: Calibration, frame: np.ndarray, profile: Profile, rack: str) -> None:

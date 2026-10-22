@@ -3,18 +3,20 @@ from __future__ import annotations
 import time
 from collections import Counter, OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 import numpy as np
 
 from tilelens.capture.change import ChangeDetector
-from tilelens.rules.board import Board, rack_to_str
+from tilelens.rules.board import WALL_CELL, Board, rack_to_str
 from tilelens.rules.profile import BLANK, Profile
 from tilelens.solver.movegen import SearchResult
+from tilelens.state.memory import BoardMemory, Coverage
 from tilelens.state.position import position_id
 from tilelens.vision.recognizer import (
     SCALE_CHANGED,
+    UNSEEN,
     CellFix,
     Reading,
     Recognizer,
@@ -25,6 +27,7 @@ MIN_HZ, MAX_HZ = 8.0, 12.0
 IDLE_AFTER = 2.0
 IDLE_INTERVAL = 0.5
 CACHE_SIZE = 64
+REMEMBERED_MIN = 0.8
 
 
 class Status(StrEnum):
@@ -51,6 +54,7 @@ class Snapshot:
     confirmed_at: float | None = None
     published_at: float | None = None
     solve_ms: float | None = None
+    coverage: Coverage | None = None
 
     @property
     def showing_result(self) -> bool:
@@ -105,6 +109,7 @@ class LiveController:
         self.last_frame: np.ndarray | None = None
         self.last_frame_size: tuple[int, int] | None = None
         self.last_read_ms: float | None = None
+        self.memory = BoardMemory()
 
     @property
     def snapshot(self) -> Snapshot:
@@ -158,6 +163,10 @@ class LiveController:
         if self._change is None:
             cal = self.recognizer.cal
             h, w = frame.shape[:2]
+            if getattr(self.recognizer, "tracks_view", False):
+                # the board moves with zoom and pan, so any pixel may matter
+                self._change = ChangeDetector([(0, 0, w, h)])
+                return self._change
             cw, ch = cal.image_size
             fx, fy = w / cw, h / ch
             gx, gy, gw, gh = cal.grid.rect
@@ -230,6 +239,10 @@ class LiveController:
         self._stable_frame = frame
         self._check_reading = None
         rack = reading.rack_counter()
+        if self._placing(reading, rack):
+            self.solver.cancel()
+            self._set(Status.READING, WAITING)
+            return
         if reading.tentative_squares():
             shrunk = (
                 self._confirmed_rack_size is not None
@@ -242,12 +255,64 @@ class LiveController:
                 self._set(Status.READING, WAITING)
                 return
         if not reading.confident:
+            self._confirm_remembered(reading, frame)
+        if not reading.confident:
             self._check_reading = reading
             self.solver.cancel()
             self._set(Status.CHECK, self._check_detail(reading), reading=reading)
             return
         order = [BLANK if t.blank else (t.letter or "") for t in reading.rack]
         self._confirm(reading.placed(), rack, order, now)
+
+    def _confirm_remembered(self, reading: Reading, frame) -> None:
+        """Played tiles never change, so a remembered letter settles an unclear read of it.
+
+        The glyph is learned as well, which teaches the letter at the current zoom.
+        """
+        mem = self.memory.board
+        if mem is None or (mem.width, mem.height) != (len(reading.cells[0]), len(reading.cells)):
+            return
+        fixes = {}
+        for r, c in reading.uncertain_cells:
+            cell = reading.cells[r][c]
+            known = mem.cells[r][c]
+            if mem.is_unknown(r, c) or known is None or cell.letter is None:
+                continue
+            letter, blank = known
+            if cell.letter == letter and cell.letter_score >= REMEMBERED_MIN:
+                fixes[(r, c)] = (letter, blank)
+        if not fixes:
+            return
+        self.recognizer.learn_from_corrections(frame, reading, fixes)
+        for (r, c), (_, blank) in fixes.items():
+            reading.cells[r][c] = replace(
+                reading.cells[r][c], blank=blank, uncertain=False, reason=""
+            )
+
+    def _placing(self, reading: Reading, rack: Counter) -> bool:
+        """Tiles moved from the rack onto the board but not yet submitted.
+
+        Only needed where placed and submitted tiles look the same; elsewhere the tentative
+        state already says so.
+        """
+        if self.last_confirmed is None or reading.rack_uncertain:
+            return False
+        before, before_rack, _ = self.last_confirmed
+        taken = sum(before_rack.values()) - sum(rack.values())
+        if taken <= 0 or rack - before_rack:
+            return False
+        seen = reading.placed()
+        if (seen.width, seen.height) != (before.width, before.height):
+            return False
+        added = sum(
+            1
+            for r in range(seen.height)
+            for c in range(seen.width)
+            if not seen.is_unknown(r, c)
+            and seen.cells[r][c] is not None
+            and before.cells[r][c] is None
+        )
+        return 0 < added <= taken
 
     def _check_detail(self, reading: Reading) -> str:
         if SCALE_CHANGED in reading.warnings:
@@ -263,10 +328,11 @@ class LiveController:
 
     def _confirm(self, board: Board, rack: Counter, order: list[str], now: float) -> None:
         self._confirmed_rack_size = sum(rack.values())
+        board, coverage = self.memory.update(board, rack)
         self.last_confirmed = (board, Counter(rack), order)
         self._confirmed_at = now
         pid = position_id(board, rack, self.profile, self.lexicon_version)
-        base = dict(pid=pid, board=board, rack=Counter(rack), confirmed_at=now)
+        base = dict(pid=pid, board=board, rack=Counter(rack), confirmed_at=now, coverage=coverage)
         if pid in self.cache:
             self.cache.move_to_end(pid)
             self._set(
@@ -312,7 +378,13 @@ class LiveController:
 
     @staticmethod
     def _keep(snap: Snapshot) -> dict:
-        return dict(pid=snap.pid, board=snap.board, rack=snap.rack, confirmed_at=snap.confirmed_at)
+        return dict(
+            pid=snap.pid,
+            board=snap.board,
+            rack=snap.rack,
+            confirmed_at=snap.confirmed_at,
+            coverage=snap.coverage,
+        )
 
     def apply_corrections(
         self,
@@ -332,7 +404,9 @@ class LiveController:
             out = []
             for c, cell in enumerate(row):
                 fix = fixes.get((r, c))
-                if fix is not None:
+                if fix is None and cell.state == UNSEEN:
+                    out.append(WALL_CELL)
+                elif fix is not None:
                     out.append((fix.letter, fix.blank) if fix.letter and fix.played else None)
                 elif cell.uncertain:
                     return False
