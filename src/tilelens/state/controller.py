@@ -110,6 +110,7 @@ class LiveController:
         self.last_frame_size: tuple[int, int] | None = None
         self.last_read_ms: float | None = None
         self.memory = BoardMemory()
+        self.last_reading: Reading | None = None
 
     @property
     def snapshot(self) -> Snapshot:
@@ -208,6 +209,7 @@ class LiveController:
         if not changed and settled and not self._force:
             return
         reading = self.recognizer.read(frame)
+        self.last_reading = reading
         self.last_grid = reading.grid
         self.last_frame_size = (frame.shape[1], frame.shape[0])
         self.last_read_ms = reading.elapsed * 1000

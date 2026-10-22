@@ -260,7 +260,7 @@ def test_shortcuts_and_controls(qapp, calibration, tmp_path):
     run_until(qapp, session, {Status.READY})
     assert set(win.shortcuts) == set(DEFAULT_SHORTCUTS)
     win.hide_btn.toggle()
-    assert session.preview_hidden and not session.overlay.isVisible()
+    assert session.preview_hidden and session.overlay.move_shown is None
     win.hide_btn.toggle()
     win.next_card()
     assert session.selected == 1
@@ -310,4 +310,87 @@ def test_debug_dump_only_on_request(qapp, calibration, tmp_path, monkeypatch):
     path = session.save_debug_dump()
     assert path.is_file() and path.with_suffix(".json").is_file()
     assert len(list(dumps.iterdir())) == 2
+    session.stop()
+
+
+def test_square_names():
+    from tilelens.ui.glass import square_name
+
+    assert square_name(0, 0) == "A1"
+    assert square_name(7, 7) == "H8"
+    assert square_name(18, 26) == "AA19"
+
+
+def test_glass_scene_draws_frame_ghosts_and_rack(qapp, calibration, tmp_path):
+    from tilelens.ui.glass import CYAN, GREEN
+
+    session, game, frame = make_session(qapp, calibration, tmp_path)
+    snap = run_until(qapp, session, {Status.READY})
+    assert snap.status == Status.READY, snap.detail
+    scene = session.overlay_scene()
+    assert scene.board is not None and scene.move is not None
+    h, w = frame["img"].shape[:2]
+    img = QImage(w, h, QImage.Format.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    from tilelens.ui.glass import paint_scene
+
+    paint_scene(p, scene)
+    p.end()
+
+    def near(x, y, color, radius=6):
+        for dx in range(-radius, radius + 1):
+            for dy in range(-radius, radius + 1):
+                c = img.pixelColor(int(x + dx), int(y + dy))
+                if c.alpha() > 150 and abs(c.hue() - color.hue()) < 12 and c.saturation() > 90:
+                    return True
+        return False
+
+    mapper = session.overlay_mapper()
+    for t in scene.move.tiles:
+        rect = mapper.rect(t.row, t.col)
+        assert near(rect.left(), rect.center().y(), CYAN)
+    assert near(scene.board.left(), scene.board.top(), CYAN)
+    if scene.rack is not None:
+        assert near(scene.rack.left() - 6, scene.rack.center().y(), GREEN)
+    session.stop()
+
+
+def test_glass_panel_cards_and_states(qapp, calibration, tmp_path):
+    from tilelens.state.memory import Coverage
+    from tilelens.ui.glass_panel import GlassPanel
+
+    session, game, frame = make_session(qapp, calibration, tmp_path)
+    snap = run_until(qapp, session, {Status.READY})
+    panel = GlassPanel()
+    panel.show_snapshot(snap, 1, 0.2)
+    moves = snap.result.moves
+    shown = [c for c in panel.cards if c.move_shown is not None]
+    assert len(shown) == min(3, len(moves))
+    assert shown[0].word.text() == moves[0].word
+    assert shown[0].points.text() == f"{moves[0].score} pts"
+    assert panel.cards[1].property("selected") is True
+    assert panel.updated.text() == "Updated just now"
+    got = []
+    panel.card_clicked.connect(got.append)
+    ev = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        QPointF(5, 5),
+        QPointF(5, 5),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    panel.cards[2].mousePressEvent(ev)
+    assert got == [2]
+    from dataclasses import replace
+
+    partial = replace(snap, coverage=Coverage.PARTIAL)
+    panel.show_snapshot(partial, 0)
+    assert "in view" in panel.subtitle.text() and "Zoom out" in panel.message.text()
+    panel.show_snapshot(Snapshot(Status.CHECK, "2 squares to check"), 0)
+    assert not panel.check_btn.isHidden()
+    assert all(c.move_shown is None for c in panel.cards)
+    assert "CHECK" in panel.live.text()
+    panel.close()
     session.stop()

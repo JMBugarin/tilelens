@@ -5,7 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QRectF, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 
 from tilelens.capture.source import PermissionGate, ScreenSource
@@ -15,6 +15,8 @@ from tilelens.rules.lexicon import Lexicon, WordListError, lexicon_for
 from tilelens.rules.profile import Profile, ProfileError, demo_profile_dir, load_profile
 from tilelens.state.controller import LiveController, Snapshot, Status
 from tilelens.state.worker import InlineSolver, ProcessSolver
+from tilelens.ui.glass import OverlayScene
+from tilelens.ui.glass_panel import GlassPanel
 from tilelens.ui.overlay import OverlayWindow
 from tilelens.ui.preview import CellMapper
 from tilelens.ui.settings import Settings
@@ -40,6 +42,7 @@ class SuppressingSource:
 class LiveSession(QObject):
     updated = Signal(object)
     message = Signal(str)
+    selection_changed = Signal(int)
 
     def __init__(
         self,
@@ -49,6 +52,7 @@ class LiveSession(QObject):
         region_provider: Callable[[], Region | None] | None = None,
         use_process: bool = True,
         overlay: OverlayWindow | None = None,
+        panel: GlassPanel | None = None,
     ):
         super().__init__()
         self.settings = settings
@@ -64,6 +68,10 @@ class LiveSession(QObject):
         self.controller: LiveController | None = None
         self.recognizer: Recognizer | None = None
         self.overlay = overlay if overlay is not None else OverlayWindow()
+        self.panel = panel if panel is not None else GlassPanel()
+        self.panel.card_clicked.connect(self.select)
+        self.panel.pause_clicked.connect(self.toggle_pause)
+        self.panel.rescan_clicked.connect(self.rescan)
         self.preview_hidden = False
         self.selected = 0
         self.timer = QTimer(self)
@@ -194,6 +202,9 @@ class LiveSession(QObject):
             region = self.region_provider()
             if region:
                 self.overlay.place(region)
+            self.panel.show()
+            self.adapter.show_on_all_spaces(int(self.panel.winId()))
+            self.adapter.exclude_from_capture(int(self.panel.winId()))
             if not self.overlay.try_exclude_from_capture(self.adapter):
                 self.message.emit(
                     "The preview window could not be hidden from screen capture; "
@@ -232,6 +243,7 @@ class LiveSession(QObject):
             self.solver.close()
             self.solver = None
         self.overlay.close()
+        self.panel.close()
         if self.adapter is not None:
             self.adapter.close()
 
@@ -241,6 +253,9 @@ class LiveSession(QObject):
         if self.controller is None:
             return
         self.controller.tick()
+        snap = self.controller.snapshot
+        if self.panel.isVisible() and snap.published_at is not None:
+            self.panel.set_age(self.controller.clock() - snap.published_at)
         self.timer.start(int(self.controller.interval() * 1000))
 
     def _on_update(self, snap: Snapshot) -> None:
@@ -310,6 +325,7 @@ class LiveSession(QObject):
     def select(self, index: int) -> None:
         self.selected = index
         self.refresh_overlay()
+        self.selection_changed.emit(index)
 
     def next_card(self) -> None:
         snap = self.snapshot
@@ -334,21 +350,80 @@ class LiveSession(QObject):
             return None
         return CellMapper.for_overlay(ctrl.last_grid, ctrl.last_frame_size, region)
 
+    def overlay_scene(self) -> OverlayScene:
+        """Board frame, rack outline and ghost tiles for the newest reading, in overlay points."""
+        ctrl, snap = self.controller, self.snapshot
+        region = self.region_provider()
+        mapper = self.overlay_mapper()
+        if ctrl is None or snap is None or region is None or mapper is None:
+            return OverlayScene()
+        reading = ctrl.last_reading
+        if snap.status in (Status.PAUSED, Status.NOT_VISIBLE) or reading is None:
+            return OverlayScene()
+        view = getattr(reading, "view", None)
+        if view is not None and view.visible.any():
+            rows, cols = np.nonzero(view.visible)
+            r0, r1, c0, c1 = rows.min(), rows.max(), cols.min(), cols.max()
+        else:
+            r0, r1, c0, c1 = 0, self.profile.height - 1, 0, self.profile.width - 1
+        board = mapper.rect(int(r0), int(c0), 0).united(mapper.rect(int(r1), int(c1), 0))
+        rack = None
+        rects = [t.rect for t in reading.rack if t.rect is not None]
+        if rects:
+            fw, fh = ctrl.last_frame_size
+            sx, sy = region.width / fw, region.height / fh
+            x0 = min(x for x, _, _, _ in rects)
+            y0 = min(y for _, y, _, _ in rects)
+            x1 = max(x + w for x, _, w, _ in rects)
+            y1 = max(y + h for _, y, _, h in rects)
+            rack = QRectF(x0 * sx, y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy)
+        known = sum(1 for t in reading.rack if not t.uncertain and (t.letter or t.blank))
+        move = None if self.preview_hidden else self.selected_move()
+        return OverlayScene(
+            move=move,
+            rect_of=mapper.rect,
+            board=board,
+            coverage=snap.coverage,
+            rack=rack,
+            rack_read=(known, len(reading.rack)),
+            value_of=self.profile.tile_value,
+        )
+
     def refresh_overlay(self, snap: Snapshot | None = None) -> None:
-        move = self.selected_move()
-        if self.preview_hidden or self.settings.overlay_mode == "panel_only" or move is None:
+        self.refresh_panel()
+        if self.settings.overlay_mode == "panel_only":
             self.overlay.clear()
             self.overlay.hide()
             return
+        scene = self.overlay_scene()
         region = self.region_provider()
-        mapper = self.overlay_mapper()
-        if region is None or mapper is None:
+        if scene.empty or region is None:
             self.overlay.clear()
+            self.overlay.hide()
             return
         self.overlay.place(region)
-        self.overlay.show_move(move, mapper)
+        self.overlay.show_scene(scene)
         if not self.overlay.isVisible():
             self.overlay.show()
+
+    def refresh_panel(self) -> None:
+        panel = self.panel
+        if panel is None:
+            return
+        if self.settings.overlay_mode == "panel_only" or self.controller is None:
+            panel.hide()
+            return
+        snap = self.snapshot
+        age = None
+        if snap is not None and snap.published_at is not None and snap.status == Status.READY:
+            age = self.controller.clock() - snap.published_at
+        panel.show_snapshot(snap, self.selected, age)
+        if not panel.user_moved:
+            region = self.region_provider()
+            if region is not None:
+                panel.move(region.x + region.width - panel.width() - 24, region.y + 72)
+        if not panel.isVisible():
+            panel.show()
 
 
 class _NullSource:

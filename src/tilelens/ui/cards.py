@@ -26,6 +26,7 @@ def describe(move: Move) -> dict:
     return {
         "word": move.word,
         "total": move.score,
+        "main_total": main.total,
         "where": f"Row {move.row + 1}, col {move.col + 1}",
         "direction": "across" if move.direction == "H" else "down",
         "tiles": len(move.tiles),

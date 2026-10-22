@@ -8,11 +8,14 @@ from PySide6.QtWidgets import QWidget
 
 from tilelens.platforms.base import Region
 from tilelens.solver.movegen import Move
-from tilelens.ui.preview import CellMapper, paint_move
+from tilelens.ui.glass import OverlayScene, paint_scene
+from tilelens.ui.preview import CellMapper
 
 
 class OverlayWindow(QWidget):
-    """Transparent, click-through window over the capture region that draws ghost tiles.
+    """Transparent, click-through window over the capture region.
+
+    Draws the board frame, the rack outline and ghost tiles for the selected play.
 
     It never receives input and never sends any; previewing a placement places nothing.
     """
@@ -31,8 +34,7 @@ class OverlayWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.move_shown: Move | None = None
-        self.mapper: CellMapper | None = None
+        self.scene = OverlayScene()
         self.excluded = False
         self.suppressed = False
         self.suppress_log: list[float] = []
@@ -41,13 +43,19 @@ class OverlayWindow(QWidget):
     def place(self, region: Region) -> None:
         self.setGeometry(region.x, region.y, region.width, region.height)
 
-    def show_move(self, move: Move | None, mapper: CellMapper | None) -> None:
-        self.move_shown = move
-        self.mapper = mapper
+    @property
+    def move_shown(self) -> Move | None:
+        return self.scene.move
+
+    def show_scene(self, scene: OverlayScene) -> None:
+        self.scene = scene
         self.update()
 
+    def show_move(self, move: Move | None, mapper: CellMapper | None) -> None:
+        self.show_scene(OverlayScene(move, mapper.rect if mapper else None))
+
     def clear(self) -> None:
-        self.show_move(None, None)
+        self.show_scene(OverlayScene())
 
     def try_exclude_from_capture(self, adapter) -> bool:
         if not self.isVisible():
@@ -58,7 +66,7 @@ class OverlayWindow(QWidget):
 
     def begin_capture(self) -> None:
         """Hide drawing for one capture when the window cannot be excluded from capture."""
-        if self.move_shown is None:
+        if self.scene.empty:
             return
         self.suppressed = True
         self._suppress_started = time.perf_counter()
@@ -74,8 +82,8 @@ class OverlayWindow(QWidget):
             self._suppress_started = None
 
     def paintEvent(self, event) -> None:
-        if self.move_shown is None or self.mapper is None or self.suppressed:
+        if self.scene.empty or self.suppressed:
             return
         painter = QPainter(self)
-        paint_move(painter, self.move_shown, self.mapper.rect)
+        paint_scene(painter, self.scene)
         painter.end()
