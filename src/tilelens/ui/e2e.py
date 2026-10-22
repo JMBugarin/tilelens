@@ -76,14 +76,33 @@ class RunReport:
         return out
 
 
+def _settled_grab(window: FakeGameWindow, grab, limit: float = 3.0):
+    """Capture once the screen shows what the window was last told to draw."""
+    want = window.current_frame().astype(np.float32)
+    end = time.monotonic() + limit
+    frame = None
+    while time.monotonic() < end:
+        _pump(0.1)
+        frame = grab()
+        if frame is None:
+            continue
+        small = cv2.resize(frame, (want.shape[1], want.shape[0]), interpolation=cv2.INTER_AREA)
+        if float(np.abs(small.astype(np.float32) - want).mean()) < 4.0:
+            return frame
+    raise WindowCovered
+
+
+class WindowCovered(RuntimeError):
+    """Another app's window is over the test window, so the screen cannot be compared."""
+
+
 def _calibrate_on_window(window: FakeGameWindow, grab, profile, seeds) -> object:
     original = window.game
     samples = []
     for seed in seeds:
         game = FakeGame(seed=seed, theme=original.theme, cell=original.cell, opening_turns=10)
         window.show_game(game)
-        _pump(0.25)
-        frame = grab()
+        frame = _settled_grab(window, grab)
         samples.append((frame, game.board.to_rows(), "".join(t for t in game.rack if t)))
     window.show_game(original)
     _pump(0.2)
@@ -142,7 +161,10 @@ def run(
         def grab():
             return adapter.capture(window.capture_region())
 
-        probe = grab()
+        try:
+            probe = _settled_grab(window, grab)
+        except WindowCovered:
+            probe = None
         if probe is None or float(probe.std()) < 1.0:
             report.notes.append(
                 "screen capture returned a blank image (display asleep, locked or covered)"
@@ -159,7 +181,13 @@ def run(
         session = LiveSession(settings, adapter=adapter, **session_kwargs)
     else:
         session = LiveSession(settings, source=CallableSource(grab), **session_kwargs)
-    cal = _calibrate_on_window(window, grab, session.profile, range(71, 79))
+    try:
+        cal = _calibrate_on_window(window, grab, session.profile, range(71, 79))
+    except WindowCovered:
+        report.notes.append("the test window was covered by another app's window")
+        session.stop()
+        window.close()
+        return report
     session.recognizer = None
     session.settings.calibration = None
     from tilelens.vision.recognizer import Recognizer
@@ -264,10 +292,13 @@ def run(
         ov = session.overlay
         if mode != "screen" or not ov.isVisible() or ov.move_shown is None:
             return
+        before = window.current_frame()
         frame = grab()
         ref = window.current_frame()
         if frame is None or ref is None or ov.move_shown is None:
             return
+        if before is None or not np.array_equal(before, ref):
+            return  # the game moved on during the capture; nothing to compare
         if frame.shape != ref.shape:
             frame = cv2.resize(frame, (ref.shape[1], ref.shape[0]), interpolation=cv2.INTER_AREA)
         mapper = session.overlay_mapper()
