@@ -282,7 +282,10 @@ class MainWindow(QMainWindow):
         snap = self.session.snapshot
         if snap is None or snap.status != Status.CHECK or snap.reading is None:
             return None
-        dlg = CorrectionDialog(snap.reading, self)
+        dlg = CorrectionDialog(snap.reading)
+        dlg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        if self.session.adapter is not None:
+            self.session.adapter.show_on_all_spaces(int(dlg.winId()))
         if dlg.exec():
             ok = self.session.controller.apply_corrections(dlg.fixes, rack=dlg.rack)
             if not ok:

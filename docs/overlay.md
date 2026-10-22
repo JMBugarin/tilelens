@@ -53,7 +53,8 @@ A translucent results panel floats over the game, by default at the right edge o
 region; drag it anywhere. It shows the three best plays (rank, word, points, starting square
 such as H8 and direction, word points versus crossing-word points, blanks), Pause, Rescan,
 Check tiles when something needs checking, how fresh the result is, and a legend. Clicking a
-card previews that play on the board. Unlike the overlay it takes clicks, and like the overlay
+card previews that play on the board. Its Calibrate button works over a full-screen game: the
+dialog opens on top of it, and the screenshot it learns from never includes TileLens itself. Unlike the overlay it takes clicks, and like the overlay
 it is kept out of screen capture in `exclude` mode. If it is captured anyway, it covers squares
 the way any game panel does: they are read as unseen, never as tiles. The panel is hidden in
 `panel_only` mode.
@@ -63,6 +64,10 @@ screen points. Retina capture is twice the point size, and the transform is reco
 displays are added or removed, change geometry or change scale.
 
 ### Keeping the overlay out of what is read
+
+On macOS every capture is built from the windows of other apps only, so the overlay, the glass
+panel, the control window and any open dialog are never in a capture, whatever the window's
+sharing setting does on a given macOS version. The modes below remain as a second layer.
 
 | Mode | How | Cost |
 | --- | --- | --- |

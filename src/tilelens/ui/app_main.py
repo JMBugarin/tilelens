@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
 from tilelens.capture.source import CallableSource
@@ -44,6 +44,8 @@ class App:
         self.window = MainWindow(self.session)
         self.window.region_btn.clicked.connect(self.select_region)
         self.window.cal_btn.clicked.connect(self.calibrate)
+        self.session.panel.calibrate_clicked.connect(self.calibrate)
+        self.adapter = adapter
         if demo:
             self.window.region_btn.setEnabled(False)
             self.demo_calibrate()
@@ -62,6 +64,12 @@ class App:
         cal = calibrate(samples, self.session.profile, board_hint=hint)
         self.session.recognizer = None
         self.session.set_calibration(cal)
+
+    def _float(self, dlg) -> None:
+        """Open over the game, even when it is full screen in its own Space."""
+        dlg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        if self.adapter is not None:
+            self.adapter.show_on_all_spaces(int(dlg.winId()))
 
     def select_region(self) -> None:
         self.selector = RegionSelector()
@@ -97,8 +105,8 @@ class App:
                 self.session.source_frame,
                 rack=rack,
                 previous=previous,
-                parent=self.window,
             )
+            self._float(dlg)
             if dlg.exec() and dlg.result is not None:
                 self.session.set_calibration(dlg.result)
                 self.window.show_message("")

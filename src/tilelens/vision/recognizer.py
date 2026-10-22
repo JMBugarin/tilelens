@@ -308,11 +308,19 @@ class Reading:
         return out
 
     def signature(self) -> tuple:
+        # an unclear square's best guess can change from frame to frame; that is not a change
         cells = tuple(
-            tuple((c.letter, c.blank, c.state) if c.letter else None for c in row)
+            tuple(
+                ("?", False, c.state)
+                if c.uncertain
+                else (c.letter, c.blank, c.state)
+                if c.letter
+                else None
+                for c in row
+            )
             for row in self.cells
         )
-        rack = tuple(sorted((t.letter or "", t.blank) for t in self.rack))
+        rack = tuple(sorted(("?" if t.uncertain else t.letter or "", t.blank) for t in self.rack))
         return (cells, rack)
 
 

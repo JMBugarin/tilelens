@@ -15,6 +15,8 @@ from tilelens.solver.movegen import SearchResult
 from tilelens.state.memory import BoardMemory, Coverage
 from tilelens.state.position import position_id
 from tilelens.vision.recognizer import (
+    COMMITTED,
+    RECENT,
     SCALE_CHANGED,
     UNSEEN,
     CellFix,
@@ -267,14 +269,15 @@ class LiveController:
         self._confirm(reading.placed(), rack, order, now)
 
     def _confirm_remembered(self, reading: Reading, frame) -> None:
-        """Played tiles never change, so a remembered letter settles an unclear read of it.
+        """Played tiles never change, so a remembered tile settles an unclear read of it.
 
-        The glyph is learned as well, which teaches the letter at the current zoom.
+        When the best match agrees, the glyph is learned too, which teaches the letter at the
+        current zoom.
         """
         mem = self.memory.board
         if mem is None or (mem.width, mem.height) != (len(reading.cells[0]), len(reading.cells)):
             return
-        fixes = {}
+        learn = {}
         for r, c in reading.uncertain_cells:
             cell = reading.cells[r][c]
             known = mem.cells[r][c]
@@ -282,14 +285,13 @@ class LiveController:
                 continue
             letter, blank = known
             if cell.letter == letter and cell.letter_score >= REMEMBERED_MIN:
-                fixes[(r, c)] = (letter, blank)
-        if not fixes:
-            return
-        self.recognizer.learn_from_corrections(frame, reading, fixes)
-        for (r, c), (_, blank) in fixes.items():
+                learn[(r, c)] = (letter, blank)
+            state = cell.state if cell.state in (COMMITTED, RECENT) else COMMITTED
             reading.cells[r][c] = replace(
-                reading.cells[r][c], blank=blank, uncertain=False, reason=""
+                cell, letter=letter, blank=blank, state=state, uncertain=False, reason=""
             )
+        if learn:
+            self.recognizer.learn_from_corrections(frame, reading, learn)
 
     def _placing(self, reading: Reading, rack: Counter) -> bool:
         """Tiles moved from the rack onto the board but not yet submitted.

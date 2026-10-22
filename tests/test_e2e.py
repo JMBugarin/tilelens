@@ -41,7 +41,7 @@ def test_end_to_end_in_process():
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS screen capture")
 def test_end_to_end_on_screen():
     r = run_mode("screen", 10, "cocoa")
-    if any("permission" in n or "blank image" in n for n in r["notes"]):
+    if any("permission" in n or "blank image" in n or "covered" in n for n in r["notes"]):
         pytest.skip("; ".join(r["notes"]))
     assert r["stale_results_published"] == 0
     assert r["position_changes_measured"] >= 3

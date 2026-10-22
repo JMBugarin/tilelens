@@ -179,3 +179,36 @@ def test_auto_calibration_dialog_learns_from_the_rack(setup):
     dlg.rack_edit.setText(rack_text(labels))
     assert dlg.run()
     assert dlg.result.auto and dlg.result.rack_templates
+
+
+def test_corrections_stick_across_frames(setup):
+    profile, scene, _ = setup
+    img, labels = render_view(scene, WHOLE)
+    cal = calibrate_auto(img, profile, rack_text(labels))
+    source = FrameSource()
+    solver = InlineSolver(demo_engine("demo_garden")[2])
+    ctrl = LiveController(source, ViewReader(cal, profile), solver, profile, "v1", stable_frames=2)
+    source.frame = img
+    snap = settle(ctrl)
+    assert snap.status == Status.CHECK, snap.detail
+    fixes = {}
+    for r, c in snap.reading.uncertain_cells:
+        t = labels["board"][r][c]
+        fixes[(r, c)] = (t["letter"], t["blank"]) if t else None
+    rack_fixes = {
+        i: ("?" if t["blank"] else t["letter"])
+        for i, (t, got) in enumerate(
+            zip([t for t in labels["rack"] if t], snap.reading.rack, strict=True)
+        )
+        if got.uncertain
+    }
+    assert ctrl.apply_corrections(fixes, rack_fixes=rack_fixes)
+    pid = ctrl.snapshot.pid
+    for _ in range(3):
+        snap = settle(ctrl, 3)
+        assert snap.status == Status.READY, snap.detail
+        assert snap.pid == pid
+    # a slightly different zoom changes every glyph a little
+    source.frame = render_view(scene, ViewSpec(zoom=0.73, center=(0.51, 0.5)))[0]
+    snap = settle(ctrl, 4)
+    assert (snap.status, snap.pid) == (Status.READY, pid), snap.detail

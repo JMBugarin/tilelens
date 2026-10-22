@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
 from tilelens.platforms.base import CaptureError, PlatformAdapter, Region
@@ -13,16 +15,36 @@ PERMISSION_HELP = (
 )
 
 
-def quartz_capture(region: Region) -> np.ndarray:
+def other_windows(keep: set[int] = frozenset()) -> list[int]:
+    """On-screen windows, front to back, that do not belong to this process (or are kept)."""
+    import Quartz
+
+    info = Quartz.CGWindowListCopyWindowInfo(
+        Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID
+    )
+    own = os.getpid()
+    return [
+        int(w["kCGWindowNumber"])
+        for w in info or ()
+        if int(w["kCGWindowOwnerPID"]) != own or int(w["kCGWindowNumber"]) in keep
+    ]
+
+
+def quartz_capture(region: Region, keep: set[int] = frozenset()) -> np.ndarray:
+    """Capture what is on screen without any TileLens window.
+
+    The overlay, panel and dialogs are left out by building the image from every other
+    window, which does not depend on a window's sharing setting being honoured.
+    """
     import Quartz
 
     if region.width <= 0 or region.height <= 0:
         raise CaptureError("empty capture region")
     rect = Quartz.CGRectMake(region.x, region.y, region.width, region.height)
     options = Quartz.kCGWindowImageBoundsIgnoreFraming | Quartz.kCGWindowImageShouldBeOpaque
-    image = Quartz.CGWindowListCreateImage(
-        rect, Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID, options
-    )
+    ids = other_windows(keep)
+    windows = Quartz.CFArrayCreate(None, ids, len(ids), None)
+    image = Quartz.CGWindowListCreateImageFromArray(rect, windows, options)
     if image is None:
         raise CaptureError("screen capture failed")
     width, height = Quartz.CGImageGetWidth(image), Quartz.CGImageGetHeight(image)
@@ -37,11 +59,12 @@ class MacAdapter(PlatformAdapter):
 
     def __init__(self):
         self._grabber = MssGrabber()
+        self._keep: set[int] = set()
 
     def capture(self, region: Region) -> np.ndarray:
         """Capture at the display's native resolution (2x on Retina) when Quartz is available."""
         try:
-            return quartz_capture(region)
+            return quartz_capture(region, self._keep)
         except (ImportError, CaptureError):
             return self._grabber.grab(region)
 
@@ -78,6 +101,16 @@ class MacAdapter(PlatformAdapter):
             return window.sharingType() == NSWindowSharingNone
         except Exception:
             return False
+
+    def include_in_capture(self, win_id: int) -> None:
+        try:
+            import objc
+
+            window = objc.objc_object(c_void_p=int(win_id)).window()
+            if window is not None:
+                self._keep.add(int(window.windowNumber()))
+        except Exception:
+            pass
 
     def show_on_all_spaces(self, win_id: int) -> bool:
         """Let a window appear over full-screen apps and on every Space."""
