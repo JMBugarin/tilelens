@@ -116,6 +116,9 @@ class MainWindow(QMainWindow):
 
         buttons = QHBoxLayout()
         self.region_btn = QPushButton("Select region")
+        if session.profile.appearance is not None:
+            self.region_btn.setEnabled(False)
+            self.region_btn.setToolTip("Not needed: the board is found anywhere on the screen")
         self.cal_btn = QPushButton("Calibrate")
         self.pause_btn = QPushButton("Pause")
         self.rescan_btn = QPushButton("Rescan")

@@ -45,8 +45,9 @@ older position is never shown.
 ## Zoomed and partial views
 
 With a profile that has an `[appearance]` section and an automatic calibration, the board is
-found by color on every frame where it moved. No region needs to be selected; the whole main
-display is captured unless you pick a region. The change check then covers the whole capture.
+found by color on every frame where it moved. No region is used: the whole display that shows
+the board is captured (calibration tries each display and keeps the one where the board is
+found), and the rack is looked for across the lower part of it. The change check then covers the whole capture.
 
 - **Squares out of view** are remembered from earlier views and kept while nothing can have
   changed where you cannot see:
@@ -70,7 +71,6 @@ display is captured unless you pick a region. The change check then covers the w
 - **Revealed squares.** When panning reveals squares that were unknown and the board gains
   only those, the search runs again in the background and the old result stays until the new
   one is ready.
-- **Unsubmitted tiles** are recognized when they are drawn in the rack tile's color.
 - **Remembered tiles** settle a read of the same square when it is unclear, or when it is a
   lookalike whose runner-up candidates include the remembered letter (G read as O after a
   zoom). The glyph is then learned as the remembered letter at the new zoom. Tiles removed

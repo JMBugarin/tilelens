@@ -24,6 +24,8 @@ class Settings:
     profile: str | None = None
     words: str | None = None
     region: dict | None = None
+    # display that shows the board, for profiles that find the board by color
+    board_screen: int | None = None
     calibration: str | None = None
     hz: float = 10.0
     overlay_mode: str = "exclude"

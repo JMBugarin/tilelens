@@ -173,6 +173,7 @@ class GlassPanel(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self.setStyleSheet(STYLE)
         self.setFixedWidth(340)
         self._drag: QPoint | None = None
@@ -221,6 +222,13 @@ class GlassPanel(QWidget):
         lay.addLayout(row)
         lay.addWidget(Legend())
         self.show_snapshot(None, 0)
+
+    on_shown = None  # called with the native window id each time the window is shown
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self.on_shown is not None:
+            self.on_shown(int(self.winId()))
 
     def show_snapshot(self, snap: Snapshot | None, selected: int, age: float | None = None) -> None:
         ready = snap is not None and snap.status == Status.READY and snap.result is not None

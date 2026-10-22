@@ -33,12 +33,20 @@ class OverlayWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.scene = OverlayScene()
         self.excluded = False
         self.suppressed = False
         self.suppress_log: list[float] = []
         self._suppress_started: float | None = None
+
+    on_shown = None  # called with the native window id each time the window is shown
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self.on_shown is not None:
+            self.on_shown(int(self.winId()))
 
     def place(self, region: Region) -> None:
         self.setGeometry(region.x, region.y, region.width, region.height)

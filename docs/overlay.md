@@ -33,7 +33,9 @@ System-wide hotkeys are not implemented; on macOS they need the Accessibility pe
 
 The overlay is a frameless, transparent, always-on-top window covering the capture region.
 It ignores all input (`WindowTransparentForInput` and transparent mouse events) and never
-sends any. Previewing a placement never clicks or places anything in the game.
+sends any. Like the glass panel, it stays visible when another app (the game) is clicked:
+macOS normally hides an app's tool windows when the app is not frontmost, and TileLens turns
+that off for both. Previewing a placement never clicks or places anything in the game.
 
 It draws in a glass style:
 

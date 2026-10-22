@@ -96,10 +96,15 @@ flagged. What raised accuracy without wrong reads:
   board shapes kept from confirmed positions are then matched like for like.
 - A blank is told apart by its value mark: a normal value is drawn in the letter's color, so
   its pixels lie between the letter and tile colors; a blank's mark does not.
-- Tile background colors are learned. A glyph on a background that is neither the square's
-  own color nor a known tile color is covered by something (asked about once if it carries a
-  point value, as a tile in a new color would).
-- A square whose corner shows a different uniform color is partly covered and is not read.
+- Tile background colors are learned. Played tiles can be white, take their square's color,
+  or be highlighted (the last word played). A background shared in one frame by three or more
+  squares that each show a point value and a clearly matching letter is learned on the spot;
+  a tile color on fewer squares is asked about once. A glyph on any other background is
+  covered by something and is not read.
+- A square is partly covered, and not read, when a corner differs from the rest of it, two
+  corners differ from each other, or a band along one side has another color (a panel edge
+  cutting a letter in half).
+- A blank is also recognized by a letter drawn in a color of its own instead of dark ink.
 - Labels are only learned from squares showing their own color.
 
 ## Reading a frame

@@ -348,7 +348,7 @@ def render(scene: Scene) -> tuple[np.ndarray, dict]:
         rect = geo.cell_rect(r, c, gap * 0.6)
         alpha = scene.fade.get((r, c), 1.0)
         sq_fill = sq_label = None
-        if theme.tile_takes_square and state != TENTATIVE:
+        if theme.tile_takes_square and state == COMMITTED:
             prem = p.premium_at(r, c)
             sq_fill = (250, 250, 250) if prem is None else _premium_color(theme, prem)
             sq_label = None if prem is None else _premium_label(prem)

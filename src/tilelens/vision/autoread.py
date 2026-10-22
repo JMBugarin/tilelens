@@ -33,7 +33,6 @@ from tilelens.vision.locate import (
 )
 from tilelens.vision.recognizer import (
     COMMITTED,
-    TENTATIVE,
     UNSEEN,
     Calibration,
     CalibrationError,
@@ -49,15 +48,20 @@ RING_OK = 16.0
 UNIFORM = 9.0
 BLANK_MARK = 18.0
 BLANK_OFF_LINE = 15.0
+BLANK_LETTER = 30.0
+BLANK_CHROMA = 12.0
+NEW_COLOR_SUPPORT = 3
+NEW_COLOR = "tile color not seen yet"
 TILE_BACKGROUND = 14.0
 CORNER_COVERED = 30.0
+EDGE_COVERED = 45.0
 FIX_MATCH = 0.9
 UNMARKED_LETTER = 0.9
 LABEL_INK = 25.0
 LABEL_MATCH = 0.85
 LABEL_CONTRAST = 35.0
 LETTER_CONTRAST = 45.0
-DEFAULT_RACK_ZONE = (0.2, 0.8, 0.55, 1.0)
+DEFAULT_RACK_ZONE = (0.0, 1.0, 0.35, 1.0)  # whole width: the game window can sit anywhere
 
 
 def _expected_lab(profile: Profile) -> np.ndarray:
@@ -283,16 +287,32 @@ def _corner_covered(crop_: np.ndarray, feat: np.ndarray) -> bool:
     a, b = round(size * 0.14), round(size * 0.4)
     lab = to_lab(crop_)
     ring = feat[:3]
+    corners = []
     for ys, xs in (
         (slice(a, b), slice(a, b)),
         (slice(a, b), slice(size - b, size - a)),
         (slice(size - b, size - a), slice(a, b)),
         (slice(size - b, size - a), slice(size - b, size - a)),
     ):
-        corner = np.median(lab[ys, xs].reshape(-1, 3), axis=0)
-        if float(np.linalg.norm(corner - ring)) > CORNER_COVERED:
+        corners.append(np.median(lab[ys, xs].reshape(-1, 3), axis=0))
+    if any(float(np.linalg.norm(k - ring)) > CORNER_COVERED for k in corners):
+        return True
+    # a panel edge across the square leaves a band of its color along one side
+    a, b, m = round(size * 0.06), round(size * 0.14), round(size * 0.25)
+    for strip in (
+        lab[a:b, m : size - m],
+        lab[size - b : size - a, m : size - m],
+        lab[m : size - m, a:b],
+        lab[m : size - m, size - b : size - a],
+    ):
+        if float(np.linalg.norm(np.median(strip.reshape(-1, 3), axis=0) - ring)) > EDGE_COVERED:
             return True
-    return False
+    # the ring mixes both colors when a panel hides half the square; corners do not
+    return any(
+        float(np.linalg.norm(corners[i] - corners[j])) > CORNER_COVERED
+        for i in range(4)
+        for j in range(i + 1, 4)
+    )
 
 
 def _off_line(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
@@ -370,22 +390,39 @@ class ViewReader:
         self.locates += 1
         return self.view
 
-    def _rack_colored(self, feat: np.ndarray) -> bool:
-        return float(np.linalg.norm(feat[:3] - self.rack_lab[:3])) < TILE_BACKGROUND
+    def _learn_new_colors(self) -> bool:
+        """A background shared by several squares that each show a point value and a clearly
+        matching letter is a tile color (a highlight, or plain tiles not seen at calibration).
+        Panels and popups do not line up with squares that way."""
+        learned = False
+        found = self._new_colors
+        for _, _, col in found:
+            support = sum(
+                1 for _, _, o in found if float(np.linalg.norm(o - col)) < TILE_BACKGROUND
+            )
+            if support >= NEW_COLOR_SUPPORT and not any(
+                float(np.linalg.norm(col - t)) < TILE_BACKGROUND for t in self.cal.tile_backgrounds
+            ):
+                self.cal.add_tile_background(col)
+                learned = True
+        return learned
 
     def _tile_background(self, feat: np.ndarray) -> bool:
-        if self._rack_colored(feat):
-            return True
         return any(
             float(np.linalg.norm(feat[:3] - t)) < TILE_BACKGROUND for t in self.cal.tile_backgrounds
         )
 
     def _blank_decision(self, glyph, background) -> tuple[bool, bool, str]:
+        # normal letters are dark, so their ink mixes black and the tile; a blank drawn in a
+        # color of its own lies off that line
+        if _off_line(glyph.ink, np.zeros(3, np.float32), background) > BLANK_LETTER:
+            return True, False, ""
         if glyph.value_mark and glyph.value_ink is not None:
             # a normal value is drawn in the letter's color, so its pixels mix letter ink and
             # tile background; a blank's mark in its own color lies off that line. The learned
             # blank mark color only confirms, since the background tints it.
-            if _off_line(glyph.value_ink, glyph.ink, background) <= BLANK_OFF_LINE:
+            neutral = float(np.hypot(glyph.value_ink[1], glyph.value_ink[2])) < BLANK_CHROMA
+            if neutral or _off_line(glyph.value_ink, glyph.ink, background) <= BLANK_OFF_LINE:
                 return False, False, ""
             known = self.cal.blank_value_ink
             if known is not None and float(np.linalg.norm(glyph.value_ink - known)) < BLANK_MARK:
@@ -415,6 +452,7 @@ class ViewReader:
         feats = np.zeros((rows, cols, 6), np.float32)
         crops: list = [None] * (rows * cols)
         cells: list[list[CellRead]] = []
+        self._new_colors: list[tuple[int, int, np.ndarray]] = []
         for r in range(rows):
             row = []
             for c in range(cols):
@@ -426,6 +464,12 @@ class ViewReader:
                 crops[r * cols + c] = crop_
                 row.append(self._read_cell(r, c, feat, crop_))
             cells.append(row)
+        if self._learn_new_colors():
+            # read again the squares whose tile color was not known
+            for r in range(rows):
+                for c in range(cols):
+                    if cells[r][c].reason == NEW_COLOR:
+                        cells[r][c] = self._read_cell(r, c, feats[r, c], crops[r * cols + c])
         reading = Reading(cells, rack, grid, True, time.perf_counter() - t0, [])
         reading.features = feats
         reading.crops = [x if x is not None else np.zeros((CROP, CROP, 3), np.uint8) for x in crops]
@@ -481,13 +525,13 @@ class ViewReader:
             # neither the square's color nor a known tile color: a tile in a new color (it
             # carries a point value) is asked about once; anything else covers the square
             if glyph.value_mark or not self.cal.values_expected:
-                why = "tile color not seen yet"
-                return CellRead(letter, False, COMMITTED, True, why, s1, cands)
+                if self.rec.accept("board", letter, s1, s2, same):
+                    self._new_colors.append((r, c, feat[:3].copy()))
+                return CellRead(letter, False, COMMITTED, True, NEW_COLOR, s1, cands)
             return CellRead(state=UNSEEN)
         if ring_ok and unmarked:
             return CellRead(letter, True, COMMITTED, True, "square label or blank tile?", s1, cands)
-        # a tile in the rack's color is still being placed
-        state = TENTATIVE if self._rack_colored(feat) else COMMITTED
+        state = COMMITTED
         if self.rec.accept("board", letter, s1, s2, same):
             blank, unsure, why = self._blank_decision(glyph, feat[:3])
             return CellRead(letter, blank, state, unsure, why, s1, cands)
