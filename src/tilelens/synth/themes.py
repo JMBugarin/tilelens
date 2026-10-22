@@ -34,6 +34,9 @@ class Theme:
     radius: float = 0.14
     show_values: bool = True
     value_top: bool = False
+    tile_takes_square: bool = False
+    blank_mark: Color = (240, 108, 142)
+    in_rotation: bool = True
     premium_labels: bool = True
     held_out: bool = False
     extra: dict = field(default_factory=dict)
@@ -177,6 +180,34 @@ THEMES: dict[str, Theme] = {
             value_top=True,
         ),
         Theme(
+            name="mosaic",
+            window=(40, 40, 40),
+            header=(200, 90, 120),
+            header_text=(255, 255, 255),
+            board=(205, 228, 248),
+            grid=(255, 255, 255),
+            square=(200, 228, 250),
+            premium=_premium(
+                (250, 226, 180), (110, 208, 246), (186, 244, 188), (126, 160, 240), (210, 170, 240)
+            ),
+            premium_text=(255, 255, 255),
+            tile=(102, 142, 239),
+            tile_edge=(230, 230, 230),
+            letter=(30, 30, 30),
+            value=(40, 40, 40),
+            blank_letter=(30, 30, 30),
+            tentative_tile=(102, 142, 239),
+            tentative_edge=(102, 142, 239),
+            recent_tile=(250, 250, 250),
+            rack_panel=(70, 80, 90),
+            font=("sans", 800),
+            gap=0.07,
+            radius=0.16,
+            value_top=True,
+            tile_takes_square=True,
+            in_rotation=False,
+        ),
+        Theme(
             name="ember",
             window=(30, 40, 60),
             header=(20, 60, 120),
@@ -206,5 +237,5 @@ THEMES: dict[str, Theme] = {
     ]
 }
 
-DEV_THEMES = [n for n, t in THEMES.items() if not t.held_out]
+DEV_THEMES = [n for n, t in THEMES.items() if not t.held_out and t.in_rotation]
 HELD_OUT_THEMES = [n for n, t in THEMES.items() if t.held_out]

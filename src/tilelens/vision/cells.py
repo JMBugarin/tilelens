@@ -66,6 +66,8 @@ class Glyph:
     ink: np.ndarray
     value_mark: bool
     ink_fraction: float
+    value_ink: np.ndarray | None = None
+    touches_edge: bool = False
 
 
 def _otsu(values: np.ndarray) -> float:
@@ -102,6 +104,10 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
         band = 0.27 * size
         return y + h < band or x + w < band or y > size - band or x > size - band
 
+    def in_any_corner(comp):
+        cx, cy = cents[comp]
+        return abs(cx - size / 2) > 0.2 * size and abs(cy - size / 2) > 0.2 * size
+
     def in_value_corner(comp):
         cx, cy = cents[comp]
         return cx > 0.6 * size and (cy > 0.58 * size or cy < 0.42 * size)
@@ -126,12 +132,16 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
     keep = np.zeros(n, bool)
     keep[main] = True
     value = False
+    value_pixels = np.zeros(labels.shape, bool)
     for comp in comps:
         if comp == main:
             continue
         area = stats[comp, cv2.CC_STAT_AREA]
         if in_value_corner(comp) and area < 0.45 * main_area:
             value = True
+            value_pixels |= labels == comp
+        elif in_any_corner(comp) and area < 0.45 * main_area:
+            continue
         elif (
             not hugs_edge(comp)
             and area >= 0.08 * main_area
@@ -149,6 +159,10 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
             ys_f, xs_f = np.nonzero(faint)
             if np.ptp(ys_f) >= 2 and np.ptp(xs_f) >= 1:
                 value = True
+                value_pixels |= faint
+    mx0, my0, mw, mh = stats[main, :4]
+    lim = margin + 1
+    touches = mx0 <= lim or my0 <= lim or mx0 + mw >= size - lim or my0 + mh >= size - lim
     ys, xs = np.nonzero(letter)
     y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
     g = letter[y0:y1, x0:x1].astype(np.float32)
@@ -165,8 +179,18 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
     strongest = dist[letter]
     cut = np.percentile(strongest, 70)
     ink = np.median(lab[letter & (dist >= cut)], axis=0)
+    value_ink = None
+    if value_pixels.sum() >= 3:
+        strongest_v = raw_dist[value_pixels]
+        cut_v = np.percentile(strongest_v, 60)
+        value_ink = np.median(lab[value_pixels & (raw_dist >= cut_v)], axis=0).astype(np.float32)
     return Glyph(
-        (small / norm).astype(np.float32), ink.astype(np.float32), value, float(letter.mean())
+        (small / norm).astype(np.float32),
+        ink.astype(np.float32),
+        value,
+        float(letter.mean()),
+        value_ink,
+        bool(touches),
     )
 
 
@@ -219,3 +243,18 @@ def find_tile_blobs(
         )
     blobs.sort(key=lambda b: b.rect[0])
     return blobs
+
+
+def corner_mark_ink(crop_bgr: np.ndarray, background_lab: np.ndarray) -> np.ndarray | None:
+    """Color of a point-value mark in either right-hand corner, if there is one."""
+    size = crop_bgr.shape[0]
+    lab = to_lab(crop_bgr)
+    dist = np.linalg.norm(lab - background_lab[None, None, :3], axis=2)
+    zone = np.zeros(dist.shape, bool)
+    x0, x1 = round(size * 0.6), round(size * 0.94)
+    zone[round(size * 0.06) : round(size * 0.42), x0:x1] = True
+    zone[round(size * 0.58) : round(size * 0.94), x0:x1] = True
+    marked = zone & (dist > 20)
+    if marked.sum() < 3:
+        return None
+    return np.median(lab[marked], axis=0).astype(np.float32)

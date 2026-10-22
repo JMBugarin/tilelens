@@ -37,6 +37,29 @@ uv run tilelens calibrate --profile my.toml --image a.png --board a.txt --rack "
 uv run tilelens read --profile my.toml --calibration my-calibration.json --image b.png
 ```
 
+## Automatic calibration
+
+When the profile has an `[appearance]` section, the board does not need to be centered, whole
+or uncovered, and no rectangle is drawn. You only type the rack.
+
+- **Finding the board.** Pixels are classified against the square colors. The cell pitch is
+  the period whose grid lines (light lines between squares, or edges when there are none) give
+  the strongest on-line versus between-line contrast, tried over a fine log-spaced range and at
+  twice each peak. For each candidate lattice, the visible premium squares are registered
+  against the profile layout. The best registration must agree on at least 60% of the visible
+  premium squares and beat the runner-up offset clearly. Colors that cannot be told apart (a
+  start square drawn like a double word) count as one class. Blocks of one premium color wider
+  than a square are treated as interface panels.
+- **Tracking.** While a sample of visible squares still shows the expected colors, the last
+  position is reused. A zoom, pan or resize triggers a new search.
+- **What is read.** Only squares fully on screen are read. A square that is covered by a
+  panel, a popup or the floating rack, or whose glyph runs off the square, is marked unseen
+  rather than empty. The search treats unseen squares as unavailable, so suggestions are the
+  best among the visible squares.
+- **Learning.** Letter shapes come from the typed rack. Premium-square labels are learned by
+  clustering the glyphs that repeat on squares of one type (glyphs with a point value are
+  tiles, not labels). The blank's value mark color comes from a `?` in the rack.
+
 ## Reading a frame
 
 For each square, color and glyph evidence are combined:

@@ -67,6 +67,16 @@ class TopK:
             items.pop()
 
 
+def resolve_unknown(board: Board, profile: Profile) -> Board:
+    """Unknown squares are walls: no placement may touch them. One exception: if every start
+    square is visible and empty, no move has been played yet, so the whole board is empty."""
+    if not board.has_unknown() or not board.is_empty() or not profile.start_squares:
+        return board
+    if all(board.get(r, c) is None for r, c in profile.start_squares):
+        return Board(board.width, board.height)
+    return board
+
+
 def playable_words(profile: Profile, lexicon: Lexicon) -> frozenset[str]:
     alphabet = profile.alphabet
     return frozenset(
@@ -108,6 +118,7 @@ class MoveGenerator:
             seen[0] += 1
             top.offer(score, key)
 
+        board = resolve_unknown(board, self.profile)
         complete = self._run(board, rack, sink, should_stop)
         moves = [self._make_move(board, key, score) for score, key in top.items]
         return SearchResult(moves, complete, seen[0], time.perf_counter() - t0)
@@ -142,7 +153,8 @@ class MoveGenerator:
         total_tiles = sum(rack_counts.values())
         if total_tiles == 0:
             return True
-        empty_board = board.is_empty()
+        board = resolve_unknown(board, self.profile)
+        empty_board = board.is_empty() and not board.has_unknown()
         try:
             for transposed in (False, True):
                 self._scan(
@@ -206,14 +218,14 @@ class MoveGenerator:
                         s = 0
                         while rr >= 0 and g[rr][c] is not None:
                             above.append(g[rr][c])
-                            s += 0 if bl[rr][c] else values[g[rr][c]]
+                            s += 0 if bl[rr][c] else values.get(g[rr][c], 0)
                             rr -= 1
                         prefix = "".join(reversed(above))
                         rr = r + 1
                         below = []
                         while rr < H and g[rr][c] is not None:
                             below.append(g[rr][c])
-                            s += 0 if bl[rr][c] else values[g[rr][c]]
+                            s += 0 if bl[rr][c] else values.get(g[rr][c], 0)
                             rr += 1
                         suffix = "".join(below)
                         cross_ok[r][c] = {L for L in alphabet if prefix + L + suffix in words}

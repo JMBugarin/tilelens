@@ -20,7 +20,18 @@ BUILTIN_PREMIUMS: dict[str, tuple[int, int]] = {
     "triple_word": (1, 3),
 }
 
-_TOP_KEYS = {"format", "version", "name", "board", "rules", "rack", "scoring", "tiles", "words"}
+_TOP_KEYS = {
+    "format",
+    "version",
+    "name",
+    "board",
+    "rules",
+    "rack",
+    "scoring",
+    "tiles",
+    "words",
+    "appearance",
+}
 _SECTION_KEYS = {
     "board": {"width", "height", "layout", "legend"},
     "rules": {"start_squares", "min_word_length", "word_premium_stacking"},
@@ -28,6 +39,7 @@ _SECTION_KEYS = {
     "scoring": {"full_rack_bonus", "full_rack_tiles"},
     "tiles": {"values", "distribution"},
     "words": {"path"},
+    "appearance": {"squares", "rack_zone", "rack_tile"},
 }
 
 
@@ -46,6 +58,19 @@ class Premium:
 
 
 @dataclass(frozen=True)
+class Appearance:
+    """How the game looks on screen, used to find the board without manual calibration.
+
+    Colors are stored as BGR tuples. `squares` maps "." and legend characters to the color of
+    that empty square; `rack_zone` is (x0, x1, y0, y1) as fractions of the captured area.
+    """
+
+    squares: dict[str, tuple[int, int, int]]
+    rack_zone: tuple[float, float, float, float] | None = None
+    rack_tile: tuple[int, int, int] | None = None
+
+
+@dataclass(frozen=True)
 class Profile:
     name: str
     width: int
@@ -61,6 +86,7 @@ class Profile:
     start_squares: tuple[tuple[int, int], ...]
     min_word_length: int = 2
     word_list: Path | None = None
+    appearance: Appearance | None = None
     source: Path | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
@@ -178,6 +204,8 @@ def parse_profile(data: dict[str, Any], source: Path | None = None) -> Profile:
     if rack_size and full_tiles and full_tiles > rack_size:
         errors.append("scoring.full_rack_tiles: cannot exceed rack.size")
 
+    appearance = _parse_appearance(data.get("appearance"), set(legend), errors)
+
     words = _table(data, "words")
     word_list = None
     if "path" in words:
@@ -206,6 +234,7 @@ def parse_profile(data: dict[str, Any], source: Path | None = None) -> Profile:
         start_squares=starts,
         min_word_length=min_len,
         word_list=word_list,
+        appearance=appearance,
         source=source,
         raw=data,
     )
@@ -292,6 +321,57 @@ def _parse_layout(raw, width, height, legend, errors):
                 row.append(None)
         rows.append(tuple(row))
     return tuple(rows)
+
+
+def _hex_color(value) -> tuple[int, int, int] | None:
+    if not isinstance(value, str) or len(value) != 7 or value[0] != "#":
+        return None
+    try:
+        r, g, b = (int(value[i : i + 2], 16) for i in (1, 3, 5))
+    except ValueError:
+        return None
+    return (b, g, r)
+
+
+def _parse_appearance(raw, legend_keys: set[str], errors: list[str]) -> Appearance | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        errors.append("appearance: must be a table")
+        return None
+    squares_raw = raw.get("squares")
+    squares: dict[str, tuple[int, int, int]] = {}
+    if not isinstance(squares_raw, dict) or "." not in squares_raw:
+        errors.append('appearance.squares: required table with at least "." (plain square)')
+    else:
+        for key, value in squares_raw.items():
+            color = _hex_color(value)
+            if key != "." and key not in legend_keys:
+                errors.append(f"appearance.squares: '{key}' is not in board.legend")
+            elif color is None:
+                errors.append(f'appearance.squares.{key}: must be a color like "#A1B2C3"')
+            else:
+                squares[key] = color
+    zone = raw.get("rack_zone")
+    rack_zone = None
+    if zone is not None:
+        ok = (
+            isinstance(zone, list)
+            and len(zone) == 4
+            and all(isinstance(v, int | float) and not isinstance(v, bool) for v in zone)
+            and 0 <= zone[0] < zone[1] <= 1
+            and 0 <= zone[2] < zone[3] <= 1
+        )
+        if not ok:
+            errors.append("appearance.rack_zone: must be [x0, x1, y0, y1] fractions in 0..1")
+        else:
+            rack_zone = tuple(float(v) for v in zone)
+    rack_tile = None
+    if "rack_tile" in raw:
+        rack_tile = _hex_color(raw["rack_tile"])
+        if rack_tile is None:
+            errors.append('appearance.rack_tile: must be a color like "#A1B2C3"')
+    return Appearance(squares, rack_zone, rack_tile)
 
 
 def _parse_starts(raw, width, height, errors):

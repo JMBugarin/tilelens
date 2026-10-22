@@ -230,12 +230,16 @@ def draw_tile(
     theme: Theme,
     profile: Profile,
     alpha: float = 1.0,
+    square_fill=None,
+    square_label: str | None = None,
 ):
     x, y, w, h = rect
     radius = round(w * theme.radius)
     fill = {COMMITTED: theme.tile, TENTATIVE: theme.tentative_tile, RECENT: theme.recent_tile}[
         state
     ]
+    if square_fill is not None:
+        fill = square_fill
     target = img
     if alpha < 1.0:
         target = img.copy()
@@ -254,10 +258,21 @@ def draw_tile(
             color,
             theme.letter_thickness,
         )
-        if theme.show_values and not blank:
-            value = str(profile.letter_values.get(letter, 0))
+        if theme.show_values and (not blank or theme.tile_takes_square):
+            value = "0" if blank else str(profile.letter_values.get(letter, 0))
             vy = y + h * (0.2 if theme.value_top else 0.8)
-            _text(target, value, (x + w * 0.82, vy), h * 0.16, UI_FONT, theme.value, 0.12)
+            color = theme.blank_mark if blank else theme.value
+            _text(target, value, (x + w * 0.82, vy), h * 0.16, UI_FONT, color, 0.12)
+        if square_label:
+            _text(
+                target,
+                square_label,
+                (x + w * 0.2, y + h * 0.18),
+                h * 0.11,
+                UI_FONT,
+                theme.value,
+                0.1,
+            )
     if alpha < 1.0:
         cv2.addWeighted(target, alpha, img, 1 - alpha, 0, dst=img)
 
@@ -329,7 +344,12 @@ def render(scene: Scene) -> tuple[np.ndarray, dict]:
     for (r, c), (letter, blank, state) in sorted(scene.tiles.items()):
         rect = geo.cell_rect(r, c, gap * 0.6)
         alpha = scene.fade.get((r, c), 1.0)
-        draw_tile(img, rect, letter, blank, state, theme, p, alpha)
+        sq_fill = sq_label = None
+        if theme.tile_takes_square:
+            prem = p.premium_at(r, c)
+            sq_fill = (250, 250, 250) if prem is None else _premium_color(theme, prem)
+            sq_label = None if prem is None else _premium_label(prem)
+        draw_tile(img, rect, letter, blank, state, theme, p, alpha, sq_fill, sq_label)
         board_labels[r][c] = {"letter": letter, "blank": blank, "state": state}
 
     rx, ry, rw, rh = geo.rack
