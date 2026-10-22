@@ -50,6 +50,10 @@ def test_macos_adapter_captures_and_reports_permission():
     assert adapter.screen_permission() in (True, False)
     frame = adapter.capture(Region(0, 0, 64, 48))
     assert frame.ndim == 3 and frame.shape[2] == 3 and frame.shape[0] >= 48
+    from AppKit import NSScreen
+
+    scale = NSScreen.mainScreen().backingScaleFactor()
+    assert frame.shape[:2] == (round(48 * scale), round(64 * scale))
     assert "Screen Recording" in adapter.permission_help()
     adapter.close()
 
