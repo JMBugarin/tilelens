@@ -52,6 +52,7 @@ class OverlayWindow(QWidget):
     def try_exclude_from_capture(self, adapter) -> bool:
         if not self.isVisible():
             self.show()
+        adapter.show_on_all_spaces(int(self.winId()))
         self.excluded = bool(adapter.exclude_from_capture(int(self.winId())))
         return self.excluded
 
