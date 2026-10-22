@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication
 from tilelens.capture.source import CallableSource
 from tilelens.platforms import UnsupportedPlatform, get_adapter
 from tilelens.synth.game import calibration_samples
+from tilelens.ui.auto_calibrate import AutoCalibrationDialog
 from tilelens.ui.calibrate_dialog import CalibrationDialog
 from tilelens.ui.main_window import MainWindow
 from tilelens.ui.region_select import RegionSelector
@@ -72,7 +73,7 @@ class App:
         self.session.set_region(region)
         self.window.show_message("Region saved. Now calibrate.")
 
-    def calibrate(self) -> CalibrationDialog | None:
+    def calibrate(self) -> CalibrationDialog | AutoCalibrationDialog | None:
         frame = self.session.source_frame()
         if frame is None:
             self.window.show_message(
@@ -86,6 +87,22 @@ class App:
             board, _, order = ctrl.last_confirmed
             rack = "".join(order)
         previous = self.session.recognizer.cal if self.session.recognizer else None
+        if (
+            self.session.profile.appearance is not None
+            and self.session.profile.appearance.rack_tile
+        ):
+            dlg = AutoCalibrationDialog(
+                frame,
+                self.session.profile,
+                self.session.source_frame,
+                rack=rack,
+                previous=previous,
+                parent=self.window,
+            )
+            if dlg.exec() and dlg.result is not None:
+                self.session.set_calibration(dlg.result)
+                self.window.show_message("")
+            return dlg
         dlg = CalibrationDialog(
             frame,
             self.session.profile,

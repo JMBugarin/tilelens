@@ -42,6 +42,30 @@ older position is never shown.
    - Each result carries its position ID. A result is shown only while the loop is still
      solving that same ID, and every other result is dropped.
 
+## Zoomed and partial views
+
+With a profile that has an `[appearance]` section and an automatic calibration, the board is
+found by color on every frame where it moved. No region needs to be selected; the whole main
+display is captured unless you pick a region. The change check then covers the whole capture.
+
+- **Squares out of view** are remembered from earlier views and kept while nothing can have
+  changed where you cannot see:
+  - after your own move (the rack changed), the others move next, possibly out of view, so
+    remembered squares are dropped;
+  - a change in view that you did not make starts a new record, and panning or zooming fills
+    it in.
+- **Coverage** is shown with every result:
+  - *Board aligned*: the whole board is in view.
+  - *Partial view · tracking*: every square is in view or remembered. The result is the best
+    on the whole board.
+  - *Partial view · zoom out briefly*: some squares are unknown. They are walls for the search,
+    so every move shown is legal and scored correctly, but it is only the best among the
+    squares in view. Zooming out once fixes this.
+- **Placing tiles** where placed and submitted tiles look the same: when the rack is a subset
+  of the confirmed rack and new tiles appear in view, the loop waits instead of searching.
+- **Unclear letters** on a square whose tile is remembered are settled by memory when the
+  top match agrees, and the glyph is learned at the new zoom.
+
 ## Guarantees and how they are tested
 
 `tests/test_live.py` replays the scripted fake game (`tilelens.synth.game`) through the real
@@ -60,6 +84,9 @@ after every tick, and fails if a shown result's ID differs from the ID of what i
 - **Other states:** pause, resume, lost board, failed capture, corrections, a dead solver,
   rescan and capture-rate limits.
 - **Worker process:** submitting three positions back to back delivers only the newest.
+
+`tests/test_tracking.py` covers memory rules, zooming in on a confirmed board (same result, no
+new search), a change while zoomed in (moves only on squares in view) and tile placement.
 
 ## Known limits
 
