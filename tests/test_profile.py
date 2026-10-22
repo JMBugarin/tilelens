@@ -245,3 +245,27 @@ def test_check_profile_cli(capsys, tmp_path):
     bad.write_text("version = 1\n")
     assert main(["check-profile", str(bad)]) == 1
     assert "name: required" in capsys.readouterr().err
+
+
+def test_appearance_section(raw):
+    raw["appearance"] = {
+        "squares": {".": "#FBE6CA", "l": "#B7E4FC", "W": "#F1A27F"},
+        "rack_zone": [0.25, 0.75, 0.8, 1.0],
+        "rack_tile": "#EE8E66",
+    }
+    p = parse_profile(raw)
+    assert p.appearance.squares["."] == (0xCA, 0xE6, 0xFB)
+    assert p.appearance.rack_zone == (0.25, 0.75, 0.8, 1.0)
+    assert p.appearance.rack_tile == (0x66, 0x8E, 0xEE)
+    assert parse_profile({k: v for k, v in raw.items() if k != "appearance"}).appearance is None
+
+
+def test_appearance_errors(raw):
+    raw["appearance"] = {"squares": {"l": "blue", "?": "#000000"}, "rack_zone": [0.5, 0.2, 0, 1]}
+    errs = errors_for(raw)
+    assert any('at least "."' in e for e in errs)
+    assert any("rack_zone" in e for e in errs)
+    raw["appearance"] = {"squares": {".": "#FFFFFF", "l": "blue", "?": "#000000"}}
+    errs = errors_for(raw)
+    assert any("appearance.squares.l" in e for e in errs)
+    assert any("'?' is not in board.legend" in e for e in errs)

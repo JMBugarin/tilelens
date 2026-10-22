@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from tilelens.rules.profile import BLANK
 
 EMPTY_CHARS = frozenset(".- _")
+WALL = "#"
+WALL_CELL = (WALL, False)
 
 
 @dataclass(frozen=True, order=True)
@@ -54,6 +56,8 @@ class Board:
             for ch in line:
                 if ch in EMPTY_CHARS:
                     row.append(None)
+                elif ch == WALL:
+                    row.append(WALL_CELL)
                 elif ch.isalpha():
                     row.append((ch.upper(), ch.islower()))
                 else:
@@ -81,14 +85,22 @@ class Board:
         return 0 <= row < self.height and 0 <= col < self.width
 
     def is_empty(self) -> bool:
-        return all(c is None for row in self._cells for c in row)
+        """True when no tile is known to be on the board (unknown squares do not count)."""
+        return all(c is None or c[0] == WALL for row in self._cells for c in row)
+
+    def is_unknown(self, row: int, col: int) -> bool:
+        c = self._cells[row][col]
+        return c is not None and c[0] == WALL
+
+    def has_unknown(self) -> bool:
+        return any(c is not None and c[0] == WALL for row in self._cells for c in row)
 
     def tiles(self) -> list[Tile]:
         return [
             Tile(r, c, cell[0], cell[1])
             for r, row in enumerate(self._cells)
             for c, cell in enumerate(row)
-            if cell is not None
+            if cell is not None and cell[0] != WALL
         ]
 
     def with_tiles(self, tiles: Iterable[Tile]) -> Board:

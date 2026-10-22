@@ -83,6 +83,9 @@ path = "demo_words.txt"
 | `tiles.values` | yes | Letter to points. Letters are single uppercase characters; non-Latin letters are fine. |
 | `tiles.distribution` | yes | Letter to count in the full set. Used to sanity-check what the recognizer reads. |
 | `words.path` | no | Word list, one word per line. Relative paths resolve against the profile file. |
+| `appearance.squares` | no | Hex color (`"#RRGGBB"`) of each empty square type, keyed by layout character (`.` for plain). Lets TileLens find the board on screen by itself. |
+| `appearance.rack_tile` | no | Hex color of a tile in the rack. Needed for automatic calibration. |
+| `appearance.rack_zone` | no | `[left, top, right, bottom]` fractions of the frame where the rack sits. Defaults to the lower middle. |
 
 ## Scoring rules applied
 

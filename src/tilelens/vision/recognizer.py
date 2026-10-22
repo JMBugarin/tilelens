@@ -10,7 +10,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from tilelens.rules.board import Board
+from tilelens.rules.board import WALL_CELL, Board
 from tilelens.rules.profile import BLANK, Profile
 from tilelens.vision.cells import (
     GLYPH,
@@ -25,6 +25,7 @@ COMMITTED = "committed"
 RECENT = "recent"
 TENTATIVE = "tentative"
 UNKNOWN = "unknown"
+UNSEEN = "unseen"
 
 MATCH = 3.0
 LETTER_MIN = 0.8
@@ -100,6 +101,9 @@ class Calibration:
     rack_templates: dict[str, list[np.ndarray]] = field(default_factory=dict)
     empty_glyphs: dict[str, list[np.ndarray]] = field(default_factory=dict)
     masks: list[tuple[int, int, int, int]] = field(default_factory=list)
+    auto: bool = False
+    blank_value_ink: np.ndarray | None = None
+    label_ink: np.ndarray | None = None
     version: int = 1
 
     def add_empty_glyph(self, key: str, vec: np.ndarray) -> None:
@@ -140,6 +144,11 @@ class Calibration:
             "rack_templates": {k: [enc(v) for v in vs] for k, vs in self.rack_templates.items()},
             "empty_glyphs": {k: [enc(v) for v in vs] for k, vs in self.empty_glyphs.items()},
             "masks": [list(m) for m in self.masks],
+            "auto": self.auto,
+            "label_ink": None if self.label_ink is None else self.label_ink.tolist(),
+            "blank_value_ink": (
+                None if self.blank_value_ink is None else self.blank_value_ink.tolist()
+            ),
         }
         return json.dumps(data)
 
@@ -171,6 +180,15 @@ class Calibration:
             },
             empty_glyphs={k: [dec(s) for s in vs] for k, vs in d.get("empty_glyphs", {}).items()},
             masks=[tuple(m) for m in d.get("masks", [])],
+            auto=bool(d.get("auto", False)),
+            label_ink=(
+                None if d.get("label_ink") is None else np.array(d["label_ink"], np.float32)
+            ),
+            blank_value_ink=(
+                None
+                if d.get("blank_value_ink") is None
+                else np.array(d["blank_value_ink"], np.float32)
+            ),
             version=int(d.get("version", 1)),
         )
 
@@ -262,7 +280,12 @@ class Reading:
         rows = len(self.cells)
         cols = len(self.cells[0]) if rows else 0
         cells = [
-            [(c.letter, c.blank) if c.letter and c.state in states else None for c in row]
+            [
+                WALL_CELL
+                if c.state == UNSEEN
+                else ((c.letter, c.blank) if c.letter and c.state in states else None)
+                for c in row
+            ]
             for row in self.cells
         ]
         return Board(cols, rows, cells)
