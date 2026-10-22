@@ -54,5 +54,9 @@ class PlatformAdapter(ABC):
         """Hide a native window from screen capture. Returns False if not possible."""
         return False
 
+    def show_on_all_spaces(self, win_id: int) -> bool:
+        """Keep a window visible over full-screen apps, where the OS supports it."""
+        return False
+
     def close(self) -> None:  # noqa: B027
         pass

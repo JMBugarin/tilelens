@@ -104,7 +104,7 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
 
     def in_value_corner(comp):
         cx, cy = cents[comp]
-        return cx > 0.6 * size and cy > 0.58 * size
+        return cx > 0.6 * size and (cy > 0.58 * size or cy < 0.42 * size)
 
     comps = [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] >= min_area]
     central = [i for i in comps if not hugs_edge(i)]
@@ -119,6 +119,9 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
     main = max(central, key=centrality)
     main_area = stats[main, cv2.CC_STAT_AREA]
     if main_area < min_area * 3:
+        return None
+    mx, my = cents[main]
+    if max(abs(mx - size / 2), abs(my - size / 2)) > 0.27 * size and in_value_corner(main):
         return None
     keep = np.zeros(n, bool)
     keep[main] = True
@@ -137,14 +140,15 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
             keep[comp] = True
     letter = keep[labels]
     near_letter = cv2.dilate(letter.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
-    zone = np.zeros_like(letter)
     z0, z1 = round(size * 0.6), round(size * 0.92)
-    zone[round(size * 0.58) : z1, z0:z1] = True
-    faint = (raw_dist > max(10.0, 0.45 * thr)) & zone & ~near_letter
-    if faint.sum() >= max(3, 0.004 * size * size):
-        ys_f, xs_f = np.nonzero(faint)
-        if np.ptp(ys_f) >= 2 and np.ptp(xs_f) >= 1:
-            value = True
+    for y_lo, y_hi in ((round(size * 0.58), z1), (round(size * 0.08), round(size * 0.42))):
+        zone = np.zeros_like(letter)
+        zone[y_lo:y_hi, z0:z1] = True
+        faint = (raw_dist > max(10.0, 0.45 * thr)) & zone & ~near_letter
+        if faint.sum() >= max(3, 0.004 * size * size):
+            ys_f, xs_f = np.nonzero(faint)
+            if np.ptp(ys_f) >= 2 and np.ptp(xs_f) >= 1:
+                value = True
     ys, xs = np.nonzero(letter)
     y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
     g = letter[y0:y1, x0:x1].astype(np.float32)

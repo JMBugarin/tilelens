@@ -50,6 +50,8 @@ class App:
             adapter.request_permission()
             self.window.show_message(adapter.permission_help())
         self.window.show()
+        if adapter is not None:
+            adapter.show_on_all_spaces(int(self.window.winId()))
         self.session.start()
 
     def demo_calibrate(self) -> None:
