@@ -147,16 +147,51 @@ class LiveSession(QObject):
         self.refresh_overlay()
 
     def capture_region(self) -> Region | None:
-        """The selected region, or the whole main display when the board is found by color."""
-        region = self.settings.region_obj
-        if region is not None or self.profile.appearance is None:
-            return region
-        app = QGuiApplication.instance()
-        screen = app.primaryScreen() if app is not None else None
-        if screen is None:
+        """The selected region, or for a profile that finds the board by color, the whole
+        display that shows it (the board can then sit anywhere and be zoomed or panned)."""
+        if self.profile.appearance is None:
+            return self.settings.region_obj
+        screens = self.screen_regions()
+        if not screens:
             return None
-        g = screen.geometry()
-        return Region(g.x(), g.y(), g.width(), g.height())
+        index = self.settings.board_screen
+        return screens[index] if index is not None and 0 <= index < len(screens) else screens[0]
+
+    @staticmethod
+    def screen_regions() -> list[Region]:
+        """Every display, the main one first."""
+        app = QGuiApplication.instance()
+        if app is None:
+            return []
+        screens = [app.primaryScreen()] + [s for s in app.screens() if s != app.primaryScreen()]
+        out = []
+        for screen in screens:
+            if screen is not None:
+                g = screen.geometry()
+                out.append(Region(g.x(), g.y(), g.width(), g.height()))
+        return out
+
+    def find_board_screen(self) -> np.ndarray | None:
+        """Capture each display and keep the first one where the board is found."""
+        from tilelens.vision.locate import BoardNotFound, locate_board
+
+        if self.profile.appearance is None or self._custom_source is not None:
+            return self.source_frame()
+        first = None
+        for index in range(len(self.screen_regions())):
+            self.settings.board_screen = index
+            frame = self.source_frame()
+            if frame is None:
+                continue
+            first = frame if first is None else first
+            try:
+                locate_board(frame, self.profile)
+            except BoardNotFound:
+                continue
+            self.refresh_overlay()
+            return frame
+        self.settings.board_screen = 0
+        return first
 
     def source_frame(self) -> np.ndarray | None:
         return self._make_source().grab()
@@ -198,6 +233,11 @@ class LiveSession(QObject):
             hz=self.settings.hz,
             on_update=self._on_update,
         )
+        if self.adapter is not None:
+            # stay over the game, on every Space, also after another app is clicked
+            for window in (self.overlay, self.panel):
+                window.on_shown = self.adapter.show_on_all_spaces
+                self.adapter.show_on_all_spaces(int(window.winId()))
         if self.settings.overlay_mode == "exclude" and self.adapter is not None:
             region = self.region_provider()
             if region:

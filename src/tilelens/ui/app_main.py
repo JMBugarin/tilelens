@@ -82,7 +82,7 @@ class App:
         self.window.show_message("Region saved. Now calibrate.")
 
     def calibrate(self) -> CalibrationDialog | AutoCalibrationDialog | None:
-        frame = self.session.source_frame()
+        frame = self.session.find_board_screen()
         if frame is None:
             self.window.show_message(
                 "Nothing captured. Select the region first"

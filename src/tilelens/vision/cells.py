@@ -145,7 +145,9 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
         elif (
             not hugs_edge(comp)
             and area >= 0.08 * main_area
-            and not (area < 0.3 * main_area and in_outer_band(comp))
+            # a small mark near the tile's edge (a corner label) is not part of the letter,
+            # judged against the square too, since thin letters are small themselves
+            and not ((area < 0.3 * main_area or area < 0.02 * size * size) and in_outer_band(comp))
         ):
             keep[comp] = True
     letter = keep[labels]

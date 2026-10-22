@@ -133,6 +133,8 @@ class MacAdapter(PlatformAdapter):
                 | NSWindowCollectionBehaviorStationary
             )
             window.setLevel_(NSStatusWindowLevel)
+            # tool windows hide when another app is clicked; these must stay over the game
+            window.setHidesOnDeactivate_(False)
             return True
         except Exception:
             return False

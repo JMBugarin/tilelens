@@ -94,3 +94,29 @@ def test_dialog_learns_from_a_chart(profile):
     dlg = AutoCalibrationDialog(chart, profile, previous=first_calibration(profile))
     assert dlg.run()
     assert set(dlg.result.rack_templates) == set(profile.alphabet)
+
+
+def test_new_tile_colors_are_learned_from_one_frame(profile):
+    cal = first_calibration(profile)
+    learn_chart(cal, render_tile_chart(profile, THEME), profile)
+    cal.tile_backgrounds.clear()
+    scene = random_scene(3, theme=THEME, cell=40, tentative=False, min_turn=10)
+    img, labels = render_view(scene, ViewSpec(zoom=0.75))
+    reading = ViewReader(cal, profile).read(img)
+    assert cal.tile_backgrounds  # white and highlighted tiles, learned on the spot
+    flagged = [c for row in reading.cells for c in row if c.reason == "tile color not seen yet"]
+    # only a color on fewer than three tiles waits for a confirmation
+    assert len(flagged) <= 2
+
+
+def test_a_panel_edge_across_a_tile_hides_it(profile):
+    import cv2
+
+    from tilelens.vision.autoread import _corner_covered
+    from tilelens.vision.cells import PATCH, patch_features, to_lab
+
+    tile = np.full((48, 48, 3), 250, np.uint8)
+    feat = patch_features(to_lab(cv2.resize(tile, (PATCH, PATCH))))
+    assert not _corner_covered(tile, feat)
+    tile[42:, :] = (140, 60, 120)
+    assert _corner_covered(tile, feat)
