@@ -129,7 +129,11 @@ def test_change_while_zoomed_limits_moves_to_visible_squares(setup):
         (r, c)
         for r, row in enumerate(visible)
         for c, v in enumerate(row)
-        if v and (r, c) not in scene.tiles and 2 < r < 10 and 2 < c < 10
+        if v
+        and (r, c) not in scene.tiles
+        and 2 < r < 10
+        and 2 < c < 10
+        and any((r + dr, c + dc) in scene.tiles for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)))
     )
     known = {t for t in setup[2].templates}
     scene.tiles[spot] = (sorted(known)[0], False, COMMITTED)
@@ -164,6 +168,7 @@ def test_tiles_taken_from_the_rack_keep_the_suggestion(setup):
     assert len(solver.submitted) == 1
 
 
+@pytest.mark.gui
 def test_auto_calibration_dialog_learns_from_the_rack(setup):
     from PySide6.QtWidgets import QApplication
 
@@ -189,7 +194,9 @@ def test_corrections_stick_across_frames(setup):
     cal = calibrate_auto(img, profile, rack_text(labels))
     source = FrameSource()
     solver = InlineSolver(demo_engine("demo_garden")[2])
-    ctrl = LiveController(source, ViewReader(cal, profile), solver, profile, "v1", stable_frames=2)
+    ctrl = LiveController(
+        source, ViewReader(cal, profile), solver, profile, "v1", stable_frames=2, soft=False
+    )
     source.frame = img
     snap = settle(ctrl)
     assert snap.status == Status.CHECK, snap.detail

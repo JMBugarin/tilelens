@@ -10,6 +10,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, 
 
 from tilelens.solver.movegen import Move
 from tilelens.state.memory import Coverage
+from tilelens.state.names import square_name
 
 CYAN = QColor(34, 211, 238)
 GREEN = QColor(52, 211, 153)
@@ -25,18 +26,6 @@ def alpha(color: QColor, a: int) -> QColor:
     return c
 
 
-def square_name(row: int, col: int) -> str:
-    """Column letters then row number, like H8."""
-    letters = ""
-    n = col
-    while True:
-        letters = chr(ord("A") + n % 26) + letters
-        n = n // 26 - 1
-        if n < 0:
-            break
-    return f"{letters}{row + 1}"
-
-
 @dataclass
 class OverlayScene:
     """Everything the overlay draws, in overlay coordinates."""
@@ -48,6 +37,7 @@ class OverlayScene:
     rack: QRectF | None = None
     rack_read: tuple[int, int] | None = None
     value_of: Callable[[str, bool], int] | None = None
+    framed: bool = False
 
     @property
     def empty(self) -> bool:
@@ -99,19 +89,22 @@ def paint_pill(
     return rect
 
 
-def paint_board_frame(p: QPainter, rect: QRectF, coverage: Coverage | None) -> None:
+def paint_board_frame(
+    p: QPainter, rect: QRectF, coverage: Coverage | None, framed: bool = False
+) -> None:
     if coverage in (Coverage.TRACKING, Coverage.PARTIAL):
         pen = QPen(alpha(AMBER, 220), 2)
         pen.setStyle(Qt.PenStyle.DashLine)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRoundedRect(rect, 10, 10)
-        text = (
-            "Partial view · tracking"
-            if coverage == Coverage.TRACKING
-            else ("Partial view · zoom out to check")
-        )
-        paint_pill(p, QPointF(rect.right() - 8, rect.top() + 4), text, AMBER, align="right")
+        if framed:
+            text = "Whole board in view · some squares behind game panels"
+        elif coverage == Coverage.TRACKING:
+            text = "Partial view · tracking"
+        else:
+            text = "Partial view · zoom out to check"
+        paint_pill(p, QPointF(rect.left() + 12, rect.top() + 4), text, AMBER)
         return
     arm = max(18.0, min(48.0, min(rect.width(), rect.height()) * 0.08))
     p.setPen(QPen(CYAN, 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
@@ -183,14 +176,6 @@ def paint_ghosts(
         size=size,
         align="center",
     )
-    paint_pill(
-        p,
-        QPointF(box.center().x(), box.bottom() + size * 1.4),
-        "PREVIEW",
-        CYAN,
-        size=size * 0.85,
-        align="center",
-    )
 
 
 def paint_rack(p: QPainter, rect: QRectF, read: tuple[int, int] | None) -> None:
@@ -209,7 +194,7 @@ def paint_scene(p: QPainter, scene: OverlayScene) -> None:
     p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
     if scene.board is not None:
-        paint_board_frame(p, scene.board, scene.coverage)
+        paint_board_frame(p, scene.board, scene.coverage, scene.framed)
     if scene.rack is not None:
         paint_rack(p, scene.rack, scene.rack_read)
     if scene.move is not None and scene.rect_of is not None:

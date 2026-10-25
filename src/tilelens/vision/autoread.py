@@ -7,6 +7,7 @@ treats them as walls, so suggestions never depend on squares that cannot be seen
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
 import cv2
 import numpy as np
@@ -43,6 +44,7 @@ from tilelens.vision.recognizer import (
     Recognizer,
     premium_key,
 )
+from tilelens.vision.values import ValueVotes, tile_value
 
 RING_OK = 16.0
 UNIFORM = 9.0
@@ -56,6 +58,7 @@ TILE_BACKGROUND = 14.0
 CORNER_COVERED = 30.0
 EDGE_COVERED = 45.0
 FIX_MATCH = 0.9
+REMEMBER_MATCH = 0.96
 UNMARKED_LETTER = 0.9
 LABEL_INK = 25.0
 LABEL_MATCH = 0.85
@@ -119,11 +122,12 @@ def find_rack(
     radius: float,
     view: BoardView | None = None,
     expected: np.ndarray | None = None,
+    band: tuple[int, int, int, int] | None = None,
 ) -> list[Blob]:
     """The row of rack tiles: same-sized tile-colored squares, side by side, in the rack zone."""
     H, W = img.shape[:2]
     x0, x1, y0, y1 = rack_zone(profile)
-    band = (round(x0 * W), round(y0 * H), round(x1 * W), round(y1 * H))
+    band = band or (round(x0 * W), round(y0 * H), round(x1 * W), round(y1 * H))
     blobs = find_tile_blobs(img, band, tile_lab, radius, (0.01 * H, 0.14 * H))
     blobs = [b for b in blobs if not _on_board_square(b, view, expected, tile_lab)]
     if not blobs:
@@ -348,6 +352,7 @@ class ViewReader:
         self.cal = calibration
         self.profile = profile
         self.rec = Recognizer(calibration, profile)
+        self.rec.use_priors = True
         self.expected = _expected_lab(profile)
         self.keys = self.rec._keys
         self.view: BoardView | None = None
@@ -359,9 +364,17 @@ class ViewReader:
             else calibration.rack_proto.mean[:3]
         )
         self.locates = 0
+        self._cache: dict[int, tuple] = {}
+        self._rack_band: tuple[int, int, int, int] | None = None
+        self._rack_count = 0
+        self._rack_locates = -1
+        self._cache_rev: tuple | None = None
+        self.values = ValueVotes()
+        self.known_values: dict[str, int] = dict(profile.letter_values)
         # what the player said a square or rack tile shows, kept with the glyph it was said of
         self.board_fixes: dict[tuple[int, int], list[tuple[np.ndarray, str | None, bool]]] = {}
         self.rack_fixes: list[tuple[np.ndarray, str]] = []
+        self.rack_memory: list[tuple[np.ndarray, str]] = []
 
     def _still_aligned(self, img: np.ndarray, view: BoardView) -> bool:
         if (img.shape[1], img.shape[0]) != getattr(self, "_size", None):
@@ -381,6 +394,10 @@ class ViewReader:
                 premium_seen += 1
                 premium_ok += d < RING_OK
         return ok >= 0.45 * len(pick) and (premium_seen < 3 or premium_ok >= 0.6 * premium_seen)
+
+    def is_aligned(self, img: np.ndarray) -> bool:
+        """Cheap check that the last located board is still where it was in this frame."""
+        return self.view is not None and self._still_aligned(img, self.view)
 
     def locate(self, img: np.ndarray) -> BoardView:
         if self.view is not None and self._still_aligned(img, self.view):
@@ -453,17 +470,32 @@ class ViewReader:
         crops: list = [None] * (rows * cols)
         cells: list[list[CellRead]] = []
         self._new_colors: list[tuple[int, int, np.ndarray]] = []
+        rev = self._revision()
+        if rev != self._cache_rev:
+            self._cache, self._cache_rev = {}, rev
+        fresh: dict[int, tuple] = {}
         for r in range(rows):
             row = []
             for c in range(cols):
                 if not view.visible[r, c] or covered[r, c]:
                     row.append(CellRead(state=UNSEEN))
                     continue
-                feat, crop_ = cell_sample(board_img, board_grid, r, c)
+                key = r * cols + c
+                raw = crop(board_img, board_grid.cell_rect(r, c)).copy()
+                hit = self._cache.get(key)
+                if hit is not None and hit[0].shape == raw.shape and np.array_equal(hit[0], raw):
+                    # the square shows exactly what it showed when it was last read
+                    _, feat, crop_, cell = hit
+                    cell = replace(cell)
+                else:
+                    feat, crop_ = cell_sample(board_img, board_grid, r, c)
+                    cell = self._read_cell(r, c, feat, crop_)
                 feats[r, c] = feat
-                crops[r * cols + c] = crop_
-                row.append(self._read_cell(r, c, feat, crop_))
+                crops[key] = crop_
+                fresh[key] = (raw, feat, crop_, replace(cell))
+                row.append(cell)
             cells.append(row)
+        self._cache = fresh
         if self._learn_new_colors():
             # read again the squares whose tile color was not known
             for r in range(rows):
@@ -475,7 +507,32 @@ class ViewReader:
         reading.crops = [x if x is not None else np.zeros((CROP, CROP, 3), np.uint8) for x in crops]
         reading.view = view
         reading.rack_glyphs = rack_glyphs
+        self._vote_values(img, reading, grid)
         return reading
+
+    def _revision(self) -> tuple:
+        """Changes whenever what was learned could change how a square reads."""
+        cal = self.cal
+        return (
+            sum(len(v) for v in cal.templates.values()),
+            sum(len(v) for v in cal.rack_templates.values()),
+            len(cal.tile_backgrounds),
+            sum(len(v) for v in cal.empty_glyphs.values()),
+            sum(len(v) for v in self.board_fixes.values()),
+            cal.blank_value_ink is None,
+            cal.label_ink is None,
+        )
+
+    def _vote_values(self, img: np.ndarray, reading: Reading, grid: Grid) -> None:
+        """Read the values printed on rack tiles; board tiles show premium-adjusted numbers."""
+        trusted = self.values.trusted()
+        for tile in reading.rack:
+            letter = tile.letter
+            if tile.uncertain or tile.blank or not letter or letter in trusted:
+                continue
+            value = tile_value(img, tile.rect)
+            if value is not None:
+                self.values.add(letter, value)
 
     def _read_cell(self, r: int, c: int, feat: np.ndarray, crop_: np.ndarray) -> CellRead:
         ring_d = float(np.linalg.norm(feat[:3] - self.expected[r, c]))
@@ -539,11 +596,31 @@ class ViewReader:
             return CellRead(letter, False, state, True, "letter is unclear", s1, cands)
         return CellRead() if ring_ok else CellRead(state=UNSEEN)
 
+    def _find_rack(self, img: np.ndarray, view: BoardView | None, radius: float) -> list[Blob]:
+        """Look near where the rack was last seen first; search the whole zone when it moved."""
+        args = (img, self.profile, self.rack_lab, radius, view, self.expected)
+        if self._rack_band is not None and self._rack_locates == self.locates:
+            blobs = find_rack(*args, band=self._rack_band)
+            if len(blobs) == self._rack_count:
+                return blobs
+        blobs = find_rack(*args)
+        if blobs:
+            side = max(b.rect[2] for b in blobs)
+            H, W = img.shape[:2]
+            self._rack_band = (
+                max(0, min(b.rect[0] for b in blobs) - side),
+                max(0, min(b.rect[1] for b in blobs) - side // 2),
+                min(W, max(b.rect[0] + b.rect[2] for b in blobs) + side),
+                min(H, max(b.rect[1] + b.rect[3] for b in blobs) + side // 2),
+            )
+            self._rack_count, self._rack_locates = len(blobs), self.locates
+        return blobs
+
     def _read_rack(self, img: np.ndarray, view: BoardView | None = None) -> list[RackRead]:
         radius = max(18.0, self.cal.rack_proto.radius * 3)
         out = []
         self.last_rack_glyphs = []
-        for b in find_rack(img, self.profile, self.rack_lab, radius, view, self.expected):
+        for b in self._find_rack(img, view, radius):
             glyph = extract_glyph(b.crop, b.ring)
             self.last_rack_glyphs.append(None if glyph is None else glyph.vec)
             if glyph is None or glyph.ink_fraction < 0.01:
@@ -555,10 +632,20 @@ class ViewReader:
             if fixed[0] > FIX_MATCH:
                 out.append(RackRead(fixed[1], False, False, "", b.rect, fixed[0]))
                 continue
-            letter, s1, s2, _, same = self.rec.match(glyph, "rack")
+            letter, s1, s2, cands, same = self.rec.match(glyph, "rack")
             unsure = not self.rec.accept("rack", letter, s1, s2, same)
+            if unsure:
+                seen = max(
+                    ((float(v @ glyph.vec), ch) for v, ch in self.rack_memory), default=(0.0, "")
+                )
+                if seen[0] > REMEMBER_MATCH:
+                    # this very tile looked like this when the rack was last confirmed
+                    out.append(RackRead(seen[1], False, False, "", b.rect, seen[0], cands))
+                    continue
             out.append(
-                RackRead(letter, False, unsure, "letter is unclear" if unsure else "", b.rect, s1)
+                RackRead(
+                    letter, False, unsure, "letter is unclear" if unsure else "", b.rect, s1, cands
+                )
             )
         return out
 
@@ -592,11 +679,26 @@ class ViewReader:
         for i, letter in (rack_fixes or {}).items():
             vec = glyphs[i] if i < len(glyphs) else None
             if vec is not None and letter != BLANK:
+                self.rack_memory = [
+                    (v, ch) for v, ch in self.rack_memory if float(v @ vec) <= REMEMBER_MATCH
+                ]
                 self.rack_fixes.append((vec, letter))
                 self.cal.add_template(letter, vec, rack=True)
         self.rec._rebuild_templates()
 
     learn_from_corrections = learn
+
+    def remember_rack(self, reading: Reading) -> None:
+        """Keep the shapes of a confirmed rack, so a frame where a tile reads unclear (a hover,
+        an animation) still resolves to the letter it was confirmed as."""
+        glyphs = getattr(reading, "rack_glyphs", None) or []
+        for tile, vec in zip(reading.rack, glyphs, strict=False):
+            if vec is None or tile.uncertain or tile.blank or not tile.letter:
+                continue
+            if any(ch == tile.letter and float(v @ vec) > 0.985 for v, ch in self.rack_memory):
+                continue
+            self.rack_memory.append((vec, tile.letter))
+        del self.rack_memory[:-60]
 
     def new_game(self) -> None:
         """Corrections tied to squares belong to one game."""
@@ -644,3 +746,67 @@ def add_screen(cal: Calibration, frame: np.ndarray, profile: Profile, rack: str)
         cal.blank_value_ink = extra.blank_value_ink
     if cal.label_ink is None:
         cal.label_ink = extra.label_ink
+
+
+class NeedsLetters(CalibrationError):
+    """The rack could not be read without help; guess holds the best letter per tile."""
+
+    def __init__(self, message: str, guess: str, unsure: list[int]):
+        super().__init__(message)
+        self.guess = guess
+        self.unsure = unsure
+
+
+def guess_rack(frame: np.ndarray, profile: Profile, view: BoardView | None = None):
+    """Read the rack from stock-font shapes alone: (letters or None per tile, best letters)."""
+    from tilelens.vision.recognizer import PRIOR_MARGIN, PRIOR_MIN, font_priors
+
+    letters, vecs = font_priors()
+    alphabet = profile.alphabet
+    out: list[str | None] = []
+    best: list[str] = []
+    for b in rack_tiles(frame, profile, view):
+        glyph = extract_glyph(b.crop, b.ring)
+        if glyph is None or glyph.ink_fraction < 0.01:
+            out.append(BLANK)
+            best.append(BLANK)
+            continue
+        scores = (vecs @ glyph.vec).max(axis=0)
+        ranked = sorted(
+            ((float(s), ch) for ch, s in zip(letters, scores, strict=True) if ch in alphabet),
+            reverse=True,
+        )
+        best.append(ranked[0][1])
+        sure = ranked[0][0] >= PRIOR_MIN and ranked[0][0] - ranked[1][0] >= PRIOR_MARGIN
+        out.append(ranked[0][1] if sure else None)
+    return out, best
+
+
+def calibrate_unaided(
+    frame: np.ndarray, profile: Profile, previous: Calibration | None = None
+) -> Calibration:
+    """Calibrate from one screen without typing the rack: stock-font shapes name its letters.
+
+    Raises NeedsLetters, naming the tiles that need a human, when they cannot.
+    """
+    import copy
+
+    try:
+        view = locate_board(frame, profile)
+    except BoardNotFound as exc:
+        raise CalibrationError(f"board not found: {exc}") from None
+    letters, best = guess_rack(frame, profile, view)
+    if not letters:
+        raise CalibrationError("no rack found: bring the game's rack into view")
+    if any(ch is None for ch in letters):
+        raise NeedsLetters(
+            "some rack tiles need confirming",
+            "".join(best),
+            [i for i, ch in enumerate(letters) if ch is None],
+        )
+    rack = "".join(letters)
+    if previous is not None and previous.auto:
+        cal = copy.deepcopy(previous)
+        add_screen(cal, frame, profile, rack)
+        return cal
+    return calibrate_auto(frame, profile, rack)

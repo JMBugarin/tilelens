@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLay
 from tilelens.solver.movegen import Move
 from tilelens.state.controller import WAITING, Snapshot, Status
 from tilelens.state.memory import Coverage
+from tilelens.state.phase import phase_of
 from tilelens.ui.cards import describe
 from tilelens.ui.glass import AMBER, CYAN, GREEN, square_name
 
@@ -28,10 +29,12 @@ QWidget { color: #eef4ff; font-size: 13px; background: transparent; }
 #card[selected="true"] #points { color: #7fe7f7; }
 #where { color: #7fe7f7; }
 #muted { color: #9fb0cc; font-size: 12px; }
-QPushButton { border: 1px solid rgba(255,255,255,60); border-radius: 8px; padding: 5px 12px;
+QPushButton { border: 1px solid rgba(255,255,255,60); border-radius: 8px; padding: 5px 9px;
               background: rgba(255,255,255,16); }
 QPushButton:hover { background: rgba(255,255,255,34); }
 #check { border-color: #fbbf24; color: #fbbf24; }
+#chip { border-color: #fbbf24; color: #fbbf24; font-weight: 700; padding: 5px 0; }
+#chip:hover { background: rgba(251,191,36,60); }
 """
 
 
@@ -162,6 +165,9 @@ class GlassPanel(QWidget):
     rescan_clicked = Signal()
     check_clicked = Signal()
     calibrate_clicked = Signal()
+    release_clicked = Signal()
+    settings_clicked = Signal()
+    chip_clicked = Signal(str, object, str)
 
     def __init__(self):
         super().__init__(
@@ -175,7 +181,7 @@ class GlassPanel(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self.setStyleSheet(STYLE)
-        self.setFixedWidth(340)
+        self.setFixedWidth(392)
         self._drag: QPoint | None = None
         self.user_moved = False
         lay = QVBoxLayout(self)
@@ -186,8 +192,14 @@ class GlassPanel(QWidget):
         self.title.setObjectName("title")
         self.live = QLabel()
         self.live.setObjectName("live")
+        self.updated = QLabel()
+        self.updated.setObjectName("muted")
         head.addWidget(self.title, 1)
-        head.addWidget(self.live)
+        side = QVBoxLayout()
+        side.setSpacing(0)
+        side.addWidget(self.live, 0, Qt.AlignmentFlag.AlignRight)
+        side.addWidget(self.updated, 0, Qt.AlignmentFlag.AlignRight)
+        head.addLayout(side)
         lay.addLayout(head)
         self.subtitle = QLabel("Highest-scoring plays")
         self.subtitle.setObjectName("subtitle")
@@ -200,13 +212,38 @@ class GlassPanel(QWidget):
         self.message.setObjectName("muted")
         self.message.setWordWrap(True)
         lay.addWidget(self.message)
+        self.note = QLabel()
+        self.note.setObjectName("muted")
+        self.note.setWordWrap(True)
+        self.note.setStyleSheet("color: #fbbf24")
+        self.note.hide()
+        lay.addWidget(self.note)
+        self.chip_row = QWidget()
+        chips = QHBoxLayout(self.chip_row)
+        chips.setContentsMargins(0, 0, 0, 0)
+        chips.setSpacing(6)
+        self.chip_label = QLabel()
+        self.chip_label.setObjectName("muted")
+        chips.addWidget(self.chip_label)
+        self.chip_btns = []
+        for _ in range(5):
+            b = QPushButton()
+            b.setObjectName("chip")
+            b.setFixedWidth(34)
+            b.clicked.connect(lambda _=False, btn=b: self._chip(btn))
+            chips.addWidget(b)
+            self.chip_btns.append(b)
+        chips.addStretch(1)
+        lay.addWidget(self.chip_row)
+        self._chip_target = None
+        self.release_btn = QPushButton("Resume tracking")
+        self.release_btn.clicked.connect(self.release_clicked)
+        lay.addWidget(self.release_btn)
         row = QHBoxLayout()
         self.pause_btn = QPushButton("Pause")
         self.rescan_btn = QPushButton("Rescan")
         self.check_btn = QPushButton("Check tiles")
         self.check_btn.setObjectName("check")
-        self.updated = QLabel()
-        self.updated.setObjectName("muted")
         self.pause_btn.clicked.connect(self.pause_clicked)
         self.rescan_btn.clicked.connect(self.rescan_clicked)
         self.check_btn.clicked.connect(self.check_clicked)
@@ -217,8 +254,12 @@ class GlassPanel(QWidget):
         row.addWidget(self.rescan_btn)
         row.addWidget(self.check_btn)
         row.addWidget(self.cal_btn)
+        self.settings_btn = QPushButton("⚙")
+        self.settings_btn.setToolTip("Open the TileLens settings window")
+        self.settings_btn.setFixedWidth(34)
+        self.settings_btn.clicked.connect(self.settings_clicked)
+        row.addWidget(self.settings_btn)
         row.addStretch(1)
-        row.addWidget(self.updated)
         lay.addLayout(row)
         lay.addWidget(Legend())
         self.show_snapshot(None, 0)
@@ -230,45 +271,87 @@ class GlassPanel(QWidget):
         if self.on_shown is not None:
             self.on_shown(int(self.winId()))
 
-    def show_snapshot(self, snap: Snapshot | None, selected: int, age: float | None = None) -> None:
+    def show_snapshot(
+        self,
+        snap: Snapshot | None,
+        selected: int,
+        age: float | None = None,
+        framed: bool = False,
+    ) -> None:
         ready = snap is not None and snap.status == Status.READY and snap.result is not None
         moves = snap.result.moves if ready else []
         for i, card in enumerate(self.cards):
             card.set_move(moves[i] if i < len(moves) else None)
             card.set_selected(i == selected and card.move_shown is not None)
-        if snap is None:
-            live, color = "SETUP", QColor(150, 160, 180)
-        elif snap.status == Status.READY:
-            live, color = "LIVE", GREEN
-        elif snap.status in (Status.CHECK, Status.NOT_VISIBLE):
-            live, color = snap.status.value.upper(), AMBER
-        else:
-            live, color = snap.status.value.upper(), CYAN
-        self.live.setText(f"● {live}")
+        phase = phase_of(snap)
+        color = {"ok": GREEN, "busy": CYAN, "warn": AMBER, "idle": QColor(150, 160, 180)}[
+            phase.tone
+        ]
+        self.live.setText(f"● {phase.label.upper()}")
         self.live.setStyleSheet(f"color: {color.name()}")
         self.subtitle.setText(coverage_subtitle(snap))
+        held = snap is not None and snap.held is not None
         if snap is None:
-            msg = "Calibrate from the main window to start."
+            msg = "Open the game with its board and rack in view. TileLens learns it by itself."
+        elif held:
+            msg = phase.hint
         elif ready and not moves:
             msg = snap.detail or "No legal placement."
         elif not ready:
-            msg = snap.detail if snap.detail != snap.status.value else ""
+            msg = phase.hint if snap.status != Status.READING else ""
+            if snap.status == Status.CHECK:
+                msg = snap.detail
         elif snap.detail == WAITING:
             msg = "Placing tiles: this suggestion stays until you submit."
         elif snap.detail == "Updating":
             msg = "Updating for newly seen squares."
+        elif snap.notice:
+            msg = snap.notice
+        elif snap.coverage == Coverage.PARTIAL and framed:
+            msg = "A few squares sit behind the game's panels, so plays avoid them."
         elif snap.coverage == Coverage.PARTIAL:
             msg = "Zoom out briefly so every square can be checked."
         else:
             msg = ""
         self.message.setText(msg)
         self.message.setVisible(bool(msg))
+        self._show_chips(snap)
+        self.release_btn.setVisible(held)
         self.check_btn.setVisible(snap is not None and snap.status == Status.CHECK)
         self.pause_btn.setText(
             "Resume" if snap is not None and snap.status == Status.PAUSED else "Pause"
         )
         self.set_age(age)
         self.adjustSize()
+
+    def set_note(self, text: str) -> None:
+        """Something to act on that is not part of the tracking state (calibration trouble)."""
+        self.note.setText(text)
+        self.note.setVisible(bool(text))
+        self.adjustSize()
+
+    def _show_chips(self, snap: Snapshot | None) -> None:
+        unsure = snap.unsure if snap is not None and snap.held is None else ()
+        self._chip_target = None
+        if not unsure:
+            self.chip_row.hide()
+            return
+        kind, where, guess, cands = unsure[0]
+        letters = []
+        for ch in ([guess] if guess else []) + list(cands):
+            if ch and ch not in letters:
+                letters.append(ch)
+        self._chip_target = (kind, where)
+        self.chip_label.setText("It is:")
+        for i, b in enumerate(self.chip_btns):
+            b.setVisible(i < len(letters))
+            if i < len(letters):
+                b.setText(letters[i])
+        self.chip_row.show()
+
+    def _chip(self, btn) -> None:
+        if self._chip_target is not None:
+            self.chip_clicked.emit(self._chip_target[0], self._chip_target[1], btn.text())
 
     def set_age(self, age: float | None) -> None:
         if age is None:

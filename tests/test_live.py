@@ -100,6 +100,7 @@ class Harness:
             self.lexicon_version,
             clock=self.clock,
             on_update=self.check,
+            soft=False,
         )
 
     def truth_pid(self):
@@ -436,3 +437,24 @@ def test_solver_worker_exits_when_parent_dies(tmp_path):
             break
         time.sleep(0.1)
     assert not alive
+
+
+def test_holding_a_suggestion_through_placing_and_the_next_rack(calibration):
+    h = Harness(calibration)
+    h.settle()
+    shown = h.ctrl.snapshot
+    assert h.ctrl.hold_move(0)
+    searches = h.ctrl.searches_started
+    h.run(h.game.place_best(), settle=3)
+    snap = h.ctrl.snapshot
+    assert h.ctrl.hold is not None and snap.held == 0
+    assert snap.pid == shown.pid and h.ctrl.searches_started == searches
+    h.run(h.game.submit(), settle=3)
+    for _ in range(40):
+        if h.ctrl.hold is None:
+            break
+        h.tick()
+    snap = h.settle(40)
+    assert h.ctrl.hold is None and snap.held is None
+    assert snap.status == Status.READY and snap.pid == h.truth_pid()
+    assert snap.pid != shown.pid

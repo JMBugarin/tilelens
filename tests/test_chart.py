@@ -81,6 +81,7 @@ def test_reading_after_the_chart_is_accurate_and_never_wrong(profile):
     assert read / tiles > 0.75
 
 
+@pytest.mark.gui
 def test_dialog_learns_from_a_chart(profile):
     from PySide6.QtWidgets import QApplication
 

@@ -9,27 +9,37 @@ board and your rack, finds the three highest-scoring legal placements for this t
 previews them as ghost tiles over the game window. It never clicks or places anything, and
 everything runs on your machine.
 
-![Control panel with three ranked placements](docs/images/panel.png)
+![TileLens over Discord's Letter League: confirmed rack, ghost tiles for the selected play and the top three placements](docs/images/discord-tracking.png)
 
-![Ghost tiles over the built-in fake game](docs/images/overlay.png)
+*TileLens running over Letter League in Discord: the rack is outlined green once every tile is
+read, the selected play is previewed as dashed ghost tiles, and the panel ranks the top three
+plays by total points. The player's name is blurred.*
 
-*All images come from TileLens's built-in fake game. No real game is shown.*
+![The panel: top three plays with points split into word and crossing words](docs/images/discord-panel.png)
 
 ## How it works
 
-1. **Capture.** A screen region you choose is captured 8 to 12 times a second (10 by default),
-   and only while something changes. Frames stay in memory.
-2. **Read.** The board grid is located, and each square is classified as empty or holding a
-   tile by its colors and its glyph. Letters are matched against templates learned from your
-   own screen during calibration. Uncertain squares go to a correction grid instead of being
-   guessed.
-3. **Confirm.** A position must read the same on three frames in a row. Tiles you have placed
-   but not yet submitted show "Waiting for board".
-4. **Search.** A word graph (DAWG) search runs in a separate process. It finds every legal
-   placement and keeps the top three by score, with ties broken by coordinates. A result is
-   shown only while the board on screen is still the position it was computed for.
-5. **Preview.** A click-through overlay draws the selected placement. The overlay is hidden from
-   screen capture, so TileLens never reads its own ghost tiles.
+1. **Capture.** The whole display that shows the game is captured 8 to 12 times a second (10 by
+   default), and only read when something changed. Frames stay in memory. TileLens's own windows
+   are never part of a capture.
+2. **Align.** The board is found from its square colors on every frame where it moved, so
+   zooming, panning, resizing and fullscreen need no setup. When the board moves the preview is
+   cleared at once and returns once the board is found again.
+3. **Read.** Each square is classified as empty or holding a tile, and the rack is read tile by
+   tile. Letters are matched against shapes learned from your own screen and, for letters not
+   seen yet, against stock-font shapes, so a fresh install reads the rack without typing it.
+   The point values printed on rack tiles are read too, so scores follow the game's values.
+4. **Settle.** A position must read the same on three frames in a row. Squares and rack tiles
+   that read unclear are settled in this order: remembered tiles, then the word list (the
+   next-best letter that makes every word through the square valid), then a lone-tile check.
+   What is still unclear never stops the suggestions: an unclear square is treated as a wall
+   and the panel names the tile and offers its best letters as buttons.
+5. **Search.** A word graph (DAWG) search runs in a separate process. It finds every legal
+   placement and keeps the top three by total score, premiums and crossing words included. A
+   result is shown only while the board on screen is still the position it was computed for.
+6. **Preview.** A click-through overlay draws the selected placement as ghost tiles. Clicking
+   a card in the panel holds that play still while you place your tiles, and tracking resumes
+   by itself when your rack refills. The overlay and the panel are hidden from screen capture.
 
 "Highest scoring" means the search finished; "best found so far" means it was cut short. A
 result is only as exact as the board, rack, profile and word list it was given.
@@ -68,29 +78,50 @@ Recording**, enable the terminal you run TileLens from, and reopen that terminal
 panel shows "Game not visible: Screen Recording permission is missing". See
 [docs/manual-verification.md](docs/manual-verification.md).
 
-## Calibration walkthrough
+## Using it with Letter League in Discord
 
-![Calibration dialog](docs/images/calibrate.png)
+1. Start TileLens (`uv run tilelens`) and open the game in Discord, windowed, maximized or
+   fullscreen. With a profile that has an `[appearance]` section (see below) there is nothing
+   to calibrate: TileLens finds the board, reads the rack and learns the game's look from the
+   first screen it sees, and the control window steps out of the way.
+2. Play. The panel shows **Tracking** and the top three plays. The first play is previewed on
+   the board; click another card to preview that one instead.
+3. **Click a card to place it.** The ghost tiles freeze (the panel says **Holding**) so you can
+   lay your tiles over them. When your rack is full again with new letters, TileLens reads it
+   and resumes by itself. Click the card again, or **Resume tracking**, to let go early.
+4. When someone else plays, the old suggestion is dropped at once and the position is searched
+   again. Zooming or panning clears the preview and realigns it when the board is found.
 
-1. **Pick a profile.** Use a profile that describes your game (see below), then press
-   **Profile…**.
-2. **Choose a word list.** Press **Word list…** to pick yours (see below).
-3. **Select the region.** Press **Select region** and drag around the game's board and rack.
-4. **Calibrate.** Press **Calibrate**.
-   - Drag a rectangle around the board grid. It only needs to be roughly right, or try
-     **Guess rectangle**.
-   - Type the board: one line per row, `.` for empty, uppercase for a tile, lowercase for a
-     blank.
-   - Type the rack from left to right, with `?` for a blank.
-   - Use **Add this screen** and **Capture new screen** to add screens that show letters the
-     first one did not.
-5. **Play.** The panel shows Ready with up to three cards. Click a card to preview it on the
-   board.
+The panel states and what to do:
 
-When something is unclear, the status turns to **Check tiles**. Open the grid, fix the
-highlighted squares, and TileLens learns from the fix.
+| State | Meaning | What to do |
+| --- | --- | --- |
+| Tracking | Cards are current for the position on screen | Nothing |
+| Aligning | The board moved and is being found again | Nothing |
+| Reading rack | The rack or board is still changing | Nothing |
+| Calculating | The search is running | Nothing |
+| Holding | A card was clicked; the suggestion is frozen | Place your tiles |
+| Check one tile | A tile cannot be worked around | Tap the letter it names |
+| Board obscured | A menu, popup or window covers the board | Bring the board back into view |
+| Paused | You paused tracking | Press Resume |
 
-![Correction grid with unclear squares highlighted](docs/images/check-tiles.png)
+An unsure tile does not stop the cards: the panel says which tile and shows its best letters as
+buttons, and one tap teaches TileLens that tile for good. **Calibrate** re-learns the game from
+the screen without typing; only if the rack cannot be read does it open a dialog with the best
+guess filled in. The ⚙ button opens the settings window, which is also in the menu bar.
+
+![The fallback calibration dialog on a Letter League screen, with the rack already read](docs/images/calibrate.png)
+
+If a play scores differently in the game than in TileLens, run
+`uv run tilelens check-screen` while the game is on screen: it prints what was read, the
+rack, the top plays and the time each step took. Tile values are read from the rack tiles
+themselves and saved beside your profile (`<profile>.learned.json`).
+
+### Without an `[appearance]` section
+
+A profile without it cannot find the board by itself. Select the region, press **Calibrate**,
+drag around the board grid, type the board and the rack, and use **Add this screen** to teach
+more letters. See [docs/vision.md](docs/vision.md).
 
 ## Profile format
 
@@ -151,6 +182,15 @@ B = 1
 path = "demo_words.txt"
 ```
 
+To let TileLens find the board by itself (zoom, pan, fullscreen and no calibration typing),
+add the colors of the empty squares and of a rack tile, as shown on your screen:
+
+```toml
+[appearance]
+rack_tile = "#EF8E66"
+squares = { "." = "#FBE6CA", d = "#B7E4FC", t = "#F8D272", D = "#BDF4B2", T = "#F1A27F" }
+```
+
 Check a profile with `uv run tilelens check-profile my.toml`. Every key is described in
 [docs/profile-format.md](docs/profile-format.md).
 
@@ -188,33 +228,52 @@ On synthetic boards across five themes, including one held out from all tuning:
 
 - 99.9–100% of squares are read correctly, and there were zero silent errors.
 - 88–98% of rack tiles are read without help. The rest are flagged, never guessed.
-- A frame takes about 25 ms to read.
 
-### End to end
+On real Letter League captures in Discord (two racks, 14 tiles, `benchmarks/bench_discord.py`),
+with no calibration at all, from stock-font shapes and the printed values:
 
-From a stable change in the fake game to the result in the panel:
+| Capture size | Letters named correctly | Point values correct |
+| --- | ---: | ---: |
+| 100% (Retina) | 14 / 14 | 14 / 14 |
+| 75% | 14 / 14 | 14 / 14 |
+| 50% | 14 / 14 | 14 / 14 |
 
-- 0.57 s median, 0.62 s p95 and 0.68 s worst with real screen capture, over 20 changes.
-- 0.49 s median in-process.
-- Zero stale results were shown in either mode.
+That is a small sample. Before this change, the first of those racks read 3 of 7 tiles
+correctly and flagged or misread the other four, on a calibration that had met 12 of 26 letters.
+
+### Settled position to updated suggestions
+
+Measured on the live game with `uv run tilelens check-screen` (3456x2234 capture, M5 Pro):
+
+- A frame is read in 22–40 ms while the board has not moved, because squares that look exactly
+  as before are not read again. Finding the board again after a zoom, pan or resize takes about
+  0.5 s, and the preview is cleared before that starts.
+- From a settled position to the top three plays: about 0.25 s of compute (read, search),
+  after the three matching frames the loop waits for (0.3 s at 10 Hz).
+- The search itself takes a few milliseconds on a mid-game board. Earlier synthetic runs
+  of the whole app measured 0.57 s median to a published result.
 
 ## Limits
 
 - **Dictionary mismatch.** If your word list differs from the game's, suggestions can be words
-  the game rejects, and some valid plays will be missing.
-- **One visible window.** The board and rack must be visible in one captured region.
-  Overlapping windows, a scrolled board or a hidden rack read as "Game not visible" or
-  Check tiles.
-- **Fixed grid.** TileLens assumes a flat grid of equal square cells that does not zoom or pan.
-  Resizing the window holds results until you recalibrate.
-- **Recognition is learned from your screen.** Letters you never calibrated or corrected are
-  flagged until you confirm them once. Unusual tile effects, such as textures, gradients or
-  heavy animation, are untested.
+  the game rejects, and some valid plays will be missing. The word list is also used to settle
+  unclear letters, so a play the list lacks can make TileLens doubt a correctly read tile; the
+  panel says when it changed a letter.
+- **The board must be on screen.** A menu, popup or another window over the board reads as
+  "Board obscured". Squares behind the game's own panels (timer, rack) are never read, and
+  suggestions avoid them.
+- **Tile values come from the rack.** Printed values are read from rack tiles, so a letter that
+  has not yet been in your rack uses the profile's value until it is. Board tiles print the
+  points they scored, with premiums applied, so they are not used.
+- **Letter League was tested live on one machine** (macOS 26.6, Apple silicon, Discord's
+  windowed and maximized view). Discord's own fullscreen could not be driven from the test
+  setup; the panel, overlay and dialogs were verified over a native fullscreen window of
+  another app, which is the same macOS mechanism. Blank tiles were not seen in the live game.
 - **Tentative tiles.** A game that draws placed-but-unplayed tiles exactly like played ones
-  cannot be told apart by color.
+  cannot be told apart by color. Clicking a card holds the suggestion so your own placing
+  never counts as a change.
 - **One turn only.** TileLens maximizes this turn's score, with no strategy, rack-leave
   evaluation or opponent modeling.
-- **Real games are untested.** Only synthetic boards and the fake game window were tested.
 
 ## Privacy
 

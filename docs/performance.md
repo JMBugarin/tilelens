@@ -73,3 +73,17 @@ from real screen capture.
 - Hardware and versions: Apple M5 Pro, 24 GB, macOS 26.6, Python 3.13.16, PySide6 6.12.0,
   OpenCV 5.0.0.93, NumPy 2.5.4, mss 10.2.0. The raw JSON is in
   `benchmarks/results/e2e-inproc.json` and `benchmarks/results/e2e-screen.json`.
+
+## Live Letter League captures
+
+`uv run python benchmarks/bench_discord.py` reads two rack strips cropped from a real game
+(`tests/fixtures/discord`) with no calibration, at 100%, 75% and 50% of the captured size.
+Letters and printed point values were 14 of 14 correct at every size
+(`benchmarks/results/discord-rack.json`). A rack strip takes about 40 ms to find and read at
+full size.
+
+`uv run tilelens check-screen` times the same steps on the live screen. On a 3456x2234 capture:
+the first read, which finds the board, takes about 0.5 s; later reads of an unchanged board take
+22 to 40 ms (squares that look as before are reused, and the rack is searched near where it
+was); and a settled position reaches the top three plays after about 0.25 s of compute. The
+three matching frames the loop waits for add 0.3 s at 10 Hz.
