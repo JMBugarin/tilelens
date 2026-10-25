@@ -24,10 +24,11 @@ from tilelens.vision.locate import BoardNotFound, BoardView, locate_board
 from tilelens.vision.recognizer import Calibration, CalibrationError
 
 STEPS = (
-    "TileLens finds the board from its colors, so it does not need to be centered or whole.\n"
-    "Type the letters in your rack from left to right ('?' for a blank) and press Learn.\n"
-    "Then, if the game has a screen listing every tile (one per letter, A to Z), open it, "
-    "press Capture again and Learn: every letter is learned at once."
+    "TileLens finds the board from its colors and has read the rack for you.\n"
+    "Check the letters in your rack, left to right ('?' for a blank), fix any that are "
+    "wrong and press Learn.\n"
+    "Optionally, if the game has a screen listing every tile (one per letter, A to Z), open "
+    "it, press Capture again and Learn: every letter is learned at once."
 )
 
 
