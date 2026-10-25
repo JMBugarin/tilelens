@@ -26,6 +26,7 @@ from tilelens.vision.cells import (
 )
 from tilelens.vision.grid import Grid
 from tilelens.vision.locate import (
+    BoardHint,
     BoardNotFound,
     BoardView,
     _layout_classes,
@@ -69,6 +70,7 @@ LETTER_CONTRAST = 45.0
 MIN_STAMP_PITCH = 44.0  # full-resolution pixels per square
 MIN_DIGIT_PX = 10.0
 STAR_FRACTION = 0.015
+LIGHT_INK = 60.0
 STAMP_LETTER_MIN = 0.9  # only a tile whose letter is certain is stamped
 DEFAULT_RACK_ZONE = (0.0, 1.0, 0.35, 1.0)  # whole width: the game window can sit anywhere
 
@@ -397,6 +399,7 @@ class ViewReader:
             else calibration.rack_proto.mean[:3]
         )
         self.locates = 0
+        self.hint = BoardHint()
         self.starts = {tuple(sq) for sq in profile.start_squares}
         self._cache: dict[int, tuple] = {}
         self._rack_band: tuple[int, int, int, int] | None = None
@@ -437,7 +440,7 @@ class ViewReader:
     def locate(self, img: np.ndarray) -> BoardView:
         if self.view is not None and self._still_aligned(img, self.view):
             return self.view
-        self.view = locate_board(img, self.profile)
+        self.view = locate_board(img, self.profile, hint=self.hint)
         self._size = (img.shape[1], img.shape[0])
         self.locates += 1
         return self.view
@@ -458,6 +461,9 @@ class ViewReader:
                 self.cal.add_tile_background(col)
                 learned = True
         return learned
+
+    def _rack_look(self, feat: np.ndarray) -> bool:
+        return float(np.linalg.norm(feat[:3] - self.rack_lab[:3])) < TILE_BACKGROUND
 
     def _tile_background(self, feat: np.ndarray) -> bool:
         return any(
@@ -551,8 +557,21 @@ class ViewReader:
         reading.view = view
         reading.rack_glyphs = rack_glyphs
         reading.base_values = self.known_values
+        reading.bounds = view.extent
+        self._remember_tiles(reading)
         self._vote_values(img, reading, grid)
         return reading
+
+    def _remember_tiles(self, reading: Reading) -> None:
+        """Where tiles were last seen, so a later view of a repeating board lines up with them."""
+        tiles = frozenset(
+            (r, c)
+            for r, row in enumerate(reading.cells)
+            for c, cell in enumerate(row)
+            if cell.letter and cell.state in (COMMITTED, RECENT) and not cell.uncertain
+        )
+        if tiles:
+            self.hint = BoardHint(tiles)
 
     def _mark_start(self, reading: Reading, view: BoardView, covered: np.ndarray) -> None:
         """The purple star on an empty start square means nobody has played yet, so the board
@@ -660,6 +679,10 @@ class ViewReader:
         if label and ring_ok:
             return CellRead()
         if glyph.touches_edge:
+            return CellRead(state=UNSEEN)
+        if not ring_ok and self._rack_look(feat) and float(glyph.ink[0]) > LIGHT_INK:
+            # a rack tile's color with its light lettering is a rack tile or a button in the
+            # game's interface (PASS TURN), never a tile that has been played on the board
             return CellRead(state=UNSEEN)
         if not ring_ok and not self._tile_background(feat):
             # neither the square's color nor a known tile color: a tile in a new color (it

@@ -75,6 +75,7 @@ class BoardMemory:
                     **{k: v for k, v in mem.stamps.items() if seen.is_unknown(*k)},
                     **seen.stamps,
                 },
+                seen.bounds,
             )
         else:
             self.board = seen

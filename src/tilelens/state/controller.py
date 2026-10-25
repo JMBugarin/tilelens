@@ -718,7 +718,9 @@ class LiveController:
             return
         self._submitted_at = now
         self.searches_started += 1
-        self.solver.submit(pid, board.to_rows(), rack_to_str(rack), board.stamp_list())
+        self.solver.submit(
+            pid, board.to_rows(), rack_to_str(rack), board.stamp_list(), board.bounds
+        )
         if self._showing() and self._refines(board, rack):
             snap = self._snapshot
             self._refining = (pid, base)
@@ -830,7 +832,8 @@ class LiveController:
                     played = cell.letter and cell.state not in ("tentative", "unknown")
                     out.append((cell.letter, cell.blank) if played else None)
             cells.append(out)
-        board = Board(len(cells[0]), len(cells), cells, reading.placed().stamps)
+        placed = reading.placed()
+        board = Board(len(cells[0]), len(cells), cells, placed.stamps, placed.bounds)
         if rack is not None:
             letters = [ch.upper() if ch != BLANK else BLANK for ch in rack if not ch.isspace()]
         else:

@@ -12,6 +12,7 @@ def position_id(board: Board, rack: Counter, profile: Profile, lexicon_version: 
     parts = [
         "\n".join(board.to_rows()),
         repr(board.stamp_list()),
+        repr(board.bounds),
         rack_to_str(rack),
         profile.fingerprint(),
         repr(sorted(profile.letter_values.items())),

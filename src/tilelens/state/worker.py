@@ -18,8 +18,9 @@ class SolveOutcome:
     error: str | None = None
 
 
-def _solve(gen: MoveGenerator, rows, rack, stamps, should_stop) -> SearchResult:
+def _solve(gen: MoveGenerator, rows, rack, stamps, bounds, should_stop) -> SearchResult:
     board = Board.from_rows(rows).with_stamps({(r, c): v for r, c, v in stamps})
+    board = board.with_bounds(bounds)
     return gen.solve(board, parse_rack(rack), should_stop=should_stop)
 
 
@@ -35,8 +36,8 @@ class InlineSolver:
     def busy(self) -> bool:
         return self._pending is not None
 
-    def submit(self, pid: str, rows: list[str], rack: str, stamps=()) -> None:
-        self._pending = (pid, rows, rack, tuple(stamps))
+    def submit(self, pid: str, rows: list[str], rack: str, stamps=(), bounds=None) -> None:
+        self._pending = (pid, rows, rack, tuple(stamps), bounds)
         self.submitted.append(pid)
 
     def cancel(self) -> None:
@@ -45,9 +46,9 @@ class InlineSolver:
     def poll(self) -> list[SolveOutcome]:
         if self._pending is None:
             return []
-        pid, rows, rack, stamps = self._pending
+        pid, rows, rack, stamps, bounds = self._pending
         self._pending = None
-        return [SolveOutcome(pid, _solve(self.gen, rows, rack, stamps, None))]
+        return [SolveOutcome(pid, _solve(self.gen, rows, rack, stamps, bounds, None))]
 
     def close(self) -> None:
         pass
@@ -75,7 +76,7 @@ def _worker_main(profile_path, words_path, jobs, results, generation, time_limit
             continue
         if job is None:
             return
-        g, pid, rows, rack, stamps = job
+        g, pid, rows, rack, stamps, bounds = job
         if generation.value != g:
             results.put(("cancelled", g, pid))
             continue
@@ -85,7 +86,7 @@ def _worker_main(profile_path, words_path, jobs, results, generation, time_limit
             return generation.value != g or time.monotonic() > deadline
 
         try:
-            res = _solve(gen, rows, rack, stamps, stop)
+            res = _solve(gen, rows, rack, stamps, bounds, stop)
         except Exception as exc:
             results.put(("error", g, pid, str(exc)))
             continue
@@ -137,18 +138,18 @@ class ProcessSolver:
     def busy(self) -> bool:
         return self._running is not None or self._pending is not None
 
-    def _send(self, pid, rows, rack, stamps) -> None:
+    def _send(self, pid, rows, rack, stamps, bounds) -> None:
         self._running = pid
-        self._jobs.put((self._generation.value, pid, rows, rack, stamps))
+        self._jobs.put((self._generation.value, pid, rows, rack, stamps, bounds))
 
-    def submit(self, pid: str, rows: list[str], rack: str, stamps=()) -> None:
+    def submit(self, pid: str, rows: list[str], rack: str, stamps=(), bounds=None) -> None:
         stamps = tuple(stamps)
         if self._running is not None:
             with self._generation.get_lock():
                 self._generation.value += 1
-            self._pending = (pid, rows, rack, stamps)
+            self._pending = (pid, rows, rack, stamps, bounds)
         else:
-            self._send(pid, rows, rack, stamps)
+            self._send(pid, rows, rack, stamps, bounds)
 
     def cancel(self) -> None:
         self._pending = None

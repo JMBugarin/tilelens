@@ -590,7 +590,7 @@ class LiveSession(QObject):
         """The whole board is inside the game's canvas; any unseen squares are under its panels."""
         reading = self.controller.last_reading if self.controller is not None else None
         view = getattr(reading, "view", None)
-        return view is not None and bool(view.visible.all())
+        return view is not None and view.full
 
     def overlay_scene(self) -> OverlayScene:
         """Board frame, rack outline and ghost tiles for the newest reading, in overlay points."""

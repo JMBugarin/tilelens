@@ -33,7 +33,7 @@ _TOP_KEYS = {
     "appearance",
 }
 _SECTION_KEYS = {
-    "board": {"width", "height", "layout", "legend"},
+    "board": {"width", "height", "layout", "legend", "expand", "period"},
     "rules": {"start_squares", "min_word_length", "word_premium_stacking"},
     "rack": {"size", "blanks"},
     "scoring": {"full_rack_bonus", "full_rack_tiles"},
@@ -85,6 +85,10 @@ class Profile:
     word_stacking: str
     start_squares: tuple[tuple[int, int], ...]
     min_word_length: int = 2
+    layout_chars: tuple[str, ...] = ()
+    expand: int = 0  # squares of room, on every side, for a board that grows
+    period: tuple[int, int] | None = None  # rows and columns after which premiums repeat
+    core: tuple[int, int] = (0, 0)  # (height, width) of the board as the profile describes it
     word_list: Path | None = None
     appearance: Appearance | None = None
     source: Path | None = None
@@ -126,6 +130,11 @@ class Profile:
 
     def fingerprint(self) -> str:
         canon = {k: v for k, v in self.raw.items() if k != "words"}
+        if "board" in canon:
+            # room for growth does not change how the game looks, so it keeps a calibration valid
+            canon["board"] = {
+                k: v for k, v in canon["board"].items() if k not in ("expand", "period")
+            }
         blob = json.dumps(canon, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -201,7 +210,18 @@ def parse_profile(data: dict[str, Any], source: Path | None = None) -> Profile:
     height = v.int_range(board, "board.height", "height", 2, 40)
 
     legend = _parse_legend(board.get("legend", {}), errors)
-    layout = _parse_layout(board.get("layout"), width, height, legend, errors)
+    layout_rows = board.get("layout")
+    expand = v.int_range(board, "board.expand", "expand", 0, 60, default=0)
+    period = _parse_period(board.get("period"), expand, width, height, errors)
+    core = (height or 0, width or 0)
+    grown_rows = _grow_layout(layout_rows, width, height, expand, period, errors)
+    layout = _parse_layout(
+        grown_rows if expand else layout_rows,
+        (width or 0) + 2 * expand if width else width,
+        (height or 0) + 2 * expand if height else height,
+        legend,
+        errors,
+    )
 
     rules = _table(data, "rules")
     stacking = rules.get("word_premium_stacking", "multiply")
@@ -209,6 +229,7 @@ def parse_profile(data: dict[str, Any], source: Path | None = None) -> Profile:
         errors.append(f"rules.word_premium_stacking: must be one of {', '.join(STACKING_RULES)}")
     min_len = v.int_range(rules, "rules.min_word_length", "min_word_length", 2, 40, default=2)
     starts = _parse_starts(rules.get("start_squares"), width, height, errors)
+    starts = tuple((r + expand, c + expand) for r, c in starts)
 
     rack = _table(data, "rack")
     rack_size = v.int_range(rack, "rack.size", "size", 1, 20)
@@ -247,9 +268,13 @@ def parse_profile(data: dict[str, Any], source: Path | None = None) -> Profile:
 
     return Profile(
         name=name.strip(),
-        width=width,
-        height=height,
+        width=(width or 0) + 2 * expand,
+        height=(height or 0) + 2 * expand,
         layout=layout,
+        layout_chars=tuple(grown_rows if expand else (layout_rows or ())),
+        expand=expand,
+        period=period,
+        core=core,
         letter_values=values,
         distribution=dist,
         blanks=blanks,
@@ -398,6 +423,57 @@ def _parse_appearance(raw, legend_keys: set[str], errors: list[str]) -> Appearan
         if rack_tile is None:
             errors.append('appearance.rack_tile: must be a color like "#A1B2C3"')
     return Appearance(squares, rack_zone, rack_tile)
+
+
+def _parse_period(raw, expand, width, height, errors):
+    if not expand:
+        return None
+    ok = (
+        isinstance(raw, list)
+        and len(raw) == 2
+        and all(isinstance(x, int) and not isinstance(x, bool) and x >= 1 for x in raw)
+    )
+    if not ok:
+        errors.append("board.period: required [rows, columns] when board.expand is set")
+        return None
+    if width and height and (raw[0] > height or raw[1] > width):
+        errors.append("board.period: cannot be larger than the board")
+        return None
+    return raw[0], raw[1]
+
+
+def _grow_layout(rows, width, height, expand, period, errors):
+    """The layout with `expand` squares of room on every side, repeating the pattern.
+
+    A game whose board grows keeps repeating its premium squares, so the room is filled by
+    repeating the layout with the given period. A start marker is not repeated.
+    """
+    if not expand or period is None or not isinstance(rows, list):
+        return None
+    if not all(isinstance(r, str) and len(r) == width for r in rows) or len(rows) != height:
+        return None  # _parse_layout reports the shape problem
+    pr, pc = period
+    starts = {"*"}
+    for r in range(height):
+        for c in range(width):
+            base = rows[r % pr][c % pc]
+            if rows[r][c] != base and rows[r][c] not in starts:
+                errors.append(
+                    f"board.layout: row {r + 1}, column {c + 1} breaks the {pr}x{pc} period "
+                    f"(expected '{base}', found '{rows[r][c]}')"
+                )
+                return None
+    out = []
+    for r in range(-expand, height + expand):
+        line = []
+        for c in range(-expand, width + expand):
+            if 0 <= r < height and 0 <= c < width:
+                line.append(rows[r][c])
+            else:
+                ch = rows[r % pr][c % pc]
+                line.append("." if ch in starts else ch)
+        out.append("".join(line))
+    return out
 
 
 def _parse_starts(raw, width, height, errors):

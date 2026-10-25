@@ -61,6 +61,14 @@ stock-font letter shapes (below), and you are only asked about tiles that read u
   crossing words and extensions with it. A tile whose number cannot be read counts at the
   letter's own value. Checked against a real game: this model reproduces the game's score
   (90 after three turns, and 11 for a play the plain values scored 8).
+- **A board that grows.** Letter League adds columns and rows as play nears an edge. With
+  `board.expand` and `board.period` in the profile, the layout repeats into room around the
+  board, the lattice is registered against it (a repeating pattern fits at offsets one period
+  apart, so the offset is chosen from the star on the start square, from where tiles were last
+  seen, or from a tile on the start square), and the board's real extent is measured from the
+  squares that show an empty square's own color. A side that visibly ends is a wall beyond it;
+  a side that runs off the screen is unknown, as before. A board of 27 columns that grew to 30
+  is scanned over all 30.
 - **The starting round.** Before the first word the start square shows a spinning purple star.
   A star on a square that still has its own color is read as an empty square (never as an
   unreadable tile, which used to leave the start square unknown and block every suggestion

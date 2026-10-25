@@ -271,6 +271,7 @@ class Reading:
     elapsed: float
     warnings: list[str] = field(default_factory=list)
     base_values: dict = field(default_factory=dict, repr=False, compare=False)
+    bounds: tuple[int, int, int, int] | None = None  # first/last row and column of the board
     start_open: bool = False  # every visible start square is empty: no word has been played
     star_seen: bool = False
     features: np.ndarray | None = field(default=None, repr=False)
@@ -320,7 +321,18 @@ class Reading:
             and cell.state in states
             and cell.value != self.base_values.get(cell.letter)
         }
-        return Board(cols, rows, cells, stamps)
+        bounds = self.bounds
+        if bounds is not None:
+            cells = [
+                [
+                    None
+                    if not (bounds[0] <= r <= bounds[2] and bounds[1] <= c <= bounds[3])
+                    else cell
+                    for c, cell in enumerate(row)
+                ]
+                for r, row in enumerate(cells)
+            ]
+        return Board(cols, rows, cells, stamps, bounds)
 
     def tentative_squares(self) -> list[tuple[int, int]]:
         return [
