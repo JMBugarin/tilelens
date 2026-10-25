@@ -34,6 +34,8 @@ from tilelens.vision.locate import (
 )
 from tilelens.vision.recognizer import (
     COMMITTED,
+    RECENT,
+    TENTATIVE,
     UNSEEN,
     Calibration,
     CalibrationError,
@@ -66,6 +68,7 @@ LABEL_CONTRAST = 35.0
 LETTER_CONTRAST = 45.0
 MIN_STAMP_PITCH = 44.0  # full-resolution pixels per square
 MIN_DIGIT_PX = 10.0
+STAR_FRACTION = 0.015
 STAMP_LETTER_MIN = 0.9  # only a tile whose letter is certain is stamped
 DEFAULT_RACK_ZONE = (0.0, 1.0, 0.35, 1.0)  # whole width: the game window can sit anywhere
 
@@ -306,6 +309,15 @@ def calibrate_auto(frame: np.ndarray, profile: Profile, rack: str) -> Calibratio
     return cal
 
 
+def has_star(crop_: np.ndarray) -> bool:
+    """Violet pixels in the middle of a square: the star drawn on the start square."""
+    hsv = cv2.cvtColor(crop_, cv2.COLOR_BGR2HSV)
+    h, w = hsv.shape[:2]
+    mid = hsv[h // 8 : h - h // 8, w // 8 : w - w // 8].reshape(-1, 3)
+    violet = (mid[:, 0] >= 118) & (mid[:, 0] <= 158) & (mid[:, 1] >= 70) & (mid[:, 2] >= 90)
+    return float(violet.mean()) >= STAR_FRACTION
+
+
 def _corner_covered(crop_: np.ndarray, feat: np.ndarray) -> bool:
     """Part of the square is hidden under something of another color (a panel corner)."""
     size = crop_.shape[0]
@@ -385,6 +397,7 @@ class ViewReader:
             else calibration.rack_proto.mean[:3]
         )
         self.locates = 0
+        self.starts = {tuple(sq) for sq in profile.start_squares}
         self._cache: dict[int, tuple] = {}
         self._rack_band: tuple[int, int, int, int] | None = None
         self._rack_count = 0
@@ -532,6 +545,7 @@ class ViewReader:
                     if cells[r][c].reason == NEW_COLOR:
                         cells[r][c] = self._read_cell(r, c, feats[r, c], crops[r * cols + c])
         reading = Reading(cells, rack, grid, True, time.perf_counter() - t0, [])
+        self._mark_start(reading, view, covered)
         reading.features = feats
         reading.crops = [x if x is not None else np.zeros((CROP, CROP, 3), np.uint8) for x in crops]
         reading.view = view
@@ -539,6 +553,21 @@ class ViewReader:
         reading.base_values = self.known_values
         self._vote_values(img, reading, grid)
         return reading
+
+    def _mark_start(self, reading: Reading, view: BoardView, covered: np.ndarray) -> None:
+        """The purple star on an empty start square means nobody has played yet, so the board
+        has no played tiles. Anything tile-like elsewhere is a tile being placed, not a played
+        one."""
+        seen = [(r, c) for r, c in self.starts if view.visible[r, c] and not covered[r, c]]
+        if not any(reading.cells[r][c].star for r, c in seen):
+            return
+        if any(reading.cells[r][c].letter or reading.cells[r][c].state for r, c in seen):
+            return
+        reading.start_open = reading.star_seen = True
+        for r, row in enumerate(reading.cells):
+            for c, cell in enumerate(row):
+                if cell.letter and cell.state in (COMMITTED, RECENT):
+                    reading.cells[r][c] = replace(cell, state=TENTATIVE, value=None)
 
     def _stamp(self, img: np.ndarray, grid: Grid, r: int, c: int, letter: str) -> int | None:
         """The number on a played tile: its value with the premiums it was played on, which
@@ -587,6 +616,10 @@ class ViewReader:
     def _read_cell(self, r: int, c: int, feat: np.ndarray, crop_: np.ndarray) -> CellRead:
         ring_d = float(np.linalg.norm(feat[:3] - self.expected[r, c]))
         ring_ok = ring_d < RING_OK
+        if ring_ok and (r, c) in self.starts and has_star(crop_):
+            # the square still has its own color and shows violet: the spinning star that
+            # marks where the first word goes, never a letter
+            return CellRead(star=True)
         if ring_ok and float(crop_.std()) < 6:
             return CellRead()
         if _corner_covered(crop_, feat):

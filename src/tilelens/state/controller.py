@@ -148,6 +148,7 @@ class LiveController:
         self.last_reading: Reading | None = None
         self._aligned_at = -1e9
         self._rack_tiles = 0
+        self._star_logged = False
         self._soft_sig = None
         self._soft_since = 0.0
         self._assumed: tuple[str, float] | None = None
@@ -280,6 +281,13 @@ class LiveController:
         self.last_grid = reading.grid
         self.last_frame_size = (frame.shape[1], frame.shape[0])
         self.last_read_ms = reading.elapsed * 1000
+        if getattr(reading, "star_seen", False) != self._star_logged:
+            self._star_logged = bool(getattr(reading, "star_seen", False))
+            self.event(
+                "starting round: the star is on the start square"
+                if self._star_logged
+                else "starting round over: the start square is covered"
+            )
         if not reading.visible:
             self._not_visible("Board not found in the captured region")
             return

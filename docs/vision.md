@@ -61,6 +61,12 @@ stock-font letter shapes (below), and you are only asked about tiles that read u
   crossing words and extensions with it. A tile whose number cannot be read counts at the
   letter's own value. Checked against a real game: this model reproduces the game's score
   (90 after three turns, and 11 for a play the plain values scored 8).
+- **The starting round.** Before the first word the start square shows a spinning purple star.
+  A star on a square that still has its own color is read as an empty square (never as an
+  unreadable tile, which used to leave the start square unknown and block every suggestion
+  until the animation stopped), and it means no word has been played: tile-like shapes
+  elsewhere are treated as tiles being placed, not as played ones. Once a tile covers the
+  square the star is gone and the board is read as usual.
 - **Squares only inside the game's canvas.** Squares must lie inside the area where board
   colors are common, so the sidebar, the letterbox bars and video tiles that surround an
   activity are never read as tiles.
