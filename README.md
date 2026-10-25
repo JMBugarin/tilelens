@@ -28,7 +28,8 @@ plays by total points. The player's name is blurred.*
 3. **Read.** Each square is classified as empty or holding a tile, and the rack is read tile by
    tile. Letters are matched against shapes learned from your own screen and, for letters not
    seen yet, against stock-font shapes, so a fresh install reads the rack without typing it.
-   The point values printed on rack tiles are read too, so scores follow the game's values.
+   The point values printed on rack and board tiles are read too: Letter League counts the
+   number printed on a played tile whenever it is used again, so scores follow the game's own.
 4. **Settle.** A position must read the same on three frames in a row. Squares and rack tiles
    that read unclear are settled in this order: remembered tiles, then the word list (the
    next-best letter that makes every word through the square valid), then a lone-tile check.
@@ -194,19 +195,29 @@ squares = { "." = "#FBE6CA", d = "#B7E4FC", t = "#F8D272", D = "#BDF4B2", T = "#
 Check a profile with `uv run tilelens check-profile my.toml`. Every key is described in
 [docs/profile-format.md](docs/profile-format.md).
 
-## Bring your own word list
+## Word list and overrides
 
-TileLens includes no game's word list. The only list here is a 1,800-word list written by hand
-for the demos. Import any UTF-8 file with one word per line:
+TileLens ships no game's word list. Every word a suggestion forms (main word, extension and
+crossing words) is checked against a **baseline list** plus **overrides**, small allow and block
+lists of words the game was seen to accept or reject, each with its evidence and date. Overrides
+win over the baseline and live next to your profile, so replacing the baseline keeps them.
+
+For Letter League the working assumption is the U.S. Merriam-Webster *Official Scrabble Players
+Dictionary*, which is **not confirmed** to be what the game uses. The exact list cannot be
+shipped here, so `uv run tilelens words install-baseline` installs ENABLE (172,823 words), an
+older free Scrabble-style list that is *not* that dictionary and lacks newer words such as QI
+and ZA. If you own the exact list, install it with `--file`. See
+[docs/word-lists.md](docs/word-lists.md).
 
 ```bash
-uv run tilelens import-words ~/my-words.txt --profile my.toml
+uv run tilelens words status                       # which list, which overrides, which versions
+uv run tilelens words block UMU --evidence "game rejected UMU, no other word formed"
+uv run tilelens words allow QI --evidence "accepted at J4 on turn 9"
+uv run tilelens import-words ~/my-words.txt --profile my.toml   # or bring your own list
 ```
 
-This filters the list to the profile's alphabet, saves it in the app data folder, builds the
-search graph once and prints the path to put in the profile. Suggestions are only as good as the
-list: if it differs from the game's dictionary, the game may reject a suggestion. See
-[docs/word-lists.md](docs/word-lists.md).
+Copy `profiles/letter-league.overrides.json` (UMU blocked) next to your profile as
+`<profile name>.overrides.json` to start from it.
 
 ## Measured performance
 
@@ -255,16 +266,19 @@ Measured on the live game with `uv run tilelens check-screen` (3456x2234 capture
 
 ## Limits
 
-- **Dictionary mismatch.** If your word list differs from the game's, suggestions can be words
-  the game rejects, and some valid plays will be missing. The word list is also used to settle
+- **Dictionary mismatch.** The baseline is an assumption about the game's dictionary. If it
+  differs, suggestions can be words the game rejects (block them) and some valid plays will be
+  missing (allow them). The word list is also used to settle
   unclear letters, so a play the list lacks can make TileLens doubt a correctly read tile; the
   panel says when it changed a letter.
 - **The board must be on screen.** A menu, popup or another window over the board reads as
   "Board obscured". Squares behind the game's own panels (timer, rack) are never read, and
   suggestions avoid them.
-- **Tile values come from the rack.** Printed values are read from rack tiles, so a letter that
-  has not yet been in your rack uses the profile's value until it is. Board tiles print the
-  points they scored, with premiums applied, so they are not used.
+- **Tile values.** Rack tiles show a letter's own value, which TileLens learns. Played tiles show
+  the value they scored (premiums applied) and Letter League counts that number when the tile is
+  used again, so TileLens reads it per tile. A number it cannot read falls back to the letter's
+  own value, which scores such a play too low. A letter that has not been in your rack yet uses
+  the profile's value until it is.
 - **Letter League was tested live on one machine** (macOS 26.6, Apple silicon, Discord's
   windowed and maximized view). Discord's own fullscreen could not be driven from the test
   setup; the panel, overlay and dialogs were verified over a native fullscreen window of

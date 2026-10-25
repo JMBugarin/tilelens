@@ -1,0 +1,12 @@
+{
+  "format": "tilelens-word-overrides",
+  "version": 1,
+  "game": "Letter League",
+  "allow": {},
+  "block": {
+    "UMU": {
+      "evidence": "Letter League rejected UMU (reported by the player). The U.S. Merriam-Webster Scrabble dictionary also rejects it, per the player; neither was independently checked.",
+      "date": "2026-10-25"
+    }
+  }
+}

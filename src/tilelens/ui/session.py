@@ -79,6 +79,7 @@ class LiveSession(QObject):
         self.preview_hidden = False
         self._grid_key = None
         self._saved_at = 0.0
+        self._words_seen = None
         self.needs_letters = None
         self._saved_mark = None
         self.selected = 0
@@ -286,6 +287,7 @@ class LiveSession(QObject):
             lexicon=self.lexicon,
         )
         self.controller.on_misaligned = self._clear_preview
+        self.controller.on_event = self._log_event
         if self.adapter is not None:
             # stay over the game, on every Space, also after another app is clicked
             for window in (self.overlay, self.panel):
@@ -352,6 +354,7 @@ class LiveSession(QObject):
             return
         self.controller.tick()
         self._check_values()
+        self._check_words()
         self._save_learning()
         snap = self.controller.snapshot
         grid = self.controller.last_grid
@@ -379,20 +382,12 @@ class LiveSession(QObject):
         reader = self.recognizer
         if hasattr(reader, "known_values"):
             reader.known_values.update(learned)
-        if self.solver is not None:
-            self.solver.close()
-        self.solver = None
-        if self.use_process and self.profile.source is not None:
-            self.solver = ProcessSolver(self.profile.source, self.settings.words)
-        else:
-            from tilelens.solver.movegen import MoveGenerator
-
-            self.solver = InlineSolver(MoveGenerator(self.profile, self.lexicon, use_cache=True))
+        self._restart_solver()
         ctrl = self.controller
         ctrl.solver = self.solver
         ctrl.cache.clear()
-        ctrl.hold = None
-        ctrl.rescan()
+        if ctrl.hold is None:
+            ctrl.rescan()
         text = ", ".join(f"{k}={v}" for k, v in sorted(learned.items()))
         self.message.emit(f"Learned tile values from the game: {text}")
 
@@ -416,6 +411,54 @@ class LiveSession(QObject):
                 with contextlib.suppress(OSError):
                     cal.save(self.calibration_path())
             self._saved_mark = mark
+
+    def _restart_solver(self) -> None:
+        if self.solver is not None:
+            self.solver.close()
+        self.solver = None
+        if self.use_process and self.profile.source is not None:
+            self.solver = ProcessSolver(self.profile.source, self.settings.words)
+        else:
+            from tilelens.solver.movegen import MoveGenerator
+
+            self.solver = InlineSolver(MoveGenerator(self.profile, self.lexicon, use_cache=True))
+
+    def _words_stamp(self) -> tuple:
+        from tilelens.rules.overrides import default_path
+
+        out = []
+        for path in (
+            default_path(self.profile.source),
+            self.settings.words or self.profile.word_list,
+        ):
+            try:
+                st = Path(path).stat()
+                out.append((st.st_mtime_ns, st.st_size))
+            except (OSError, TypeError):
+                out.append(None)
+        return tuple(out)
+
+    def _check_words(self) -> None:
+        """Pick up a word recorded with `tilelens words allow|block` while TileLens runs."""
+        stamp = self._words_stamp()
+        if stamp == self._words_seen:
+            return
+        self._words_seen = stamp
+        before = self.lexicon.version if self.lexicon is not None else None
+        self._load_words()
+        if self.lexicon is None or self.controller is None or self.lexicon.version == before:
+            return
+        self._restart_solver()
+        ctrl = self.controller
+        ctrl.solver, ctrl.lexicon, ctrl.lexicon_version = (
+            self.solver,
+            self.lexicon,
+            self.lexicon.version,
+        )
+        ctrl.cache.clear()  # results made under the old words are never shown again
+        ctrl.rescan()
+        ctrl.event(f"words changed: now {self.lexicon.version}")
+        self.message.emit("Word list or overrides changed: suggestions refreshed")
 
     def _check_values(self) -> None:
         reader = self.recognizer
@@ -588,6 +631,20 @@ class LiveSession(QObject):
             value_of=self.profile.tile_value,
             framed=self.board_framed(),
         )
+
+    def _log_event(self, text: str) -> None:
+        """Append what the tracker decided to a small log, for finding out why it did it."""
+        from tilelens.paths import data_dir
+
+        path = data_dir() / "events.log"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists() and path.stat().st_size > 200_000:
+                path.write_text(path.read_text()[-50_000:])
+            with path.open("a") as f:
+                f.write(f"{time.strftime('%H:%M:%S')} {text}\n")
+        except OSError:
+            pass
 
     def _clear_preview(self) -> None:
         self._grid_key = None
