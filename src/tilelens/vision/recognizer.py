@@ -365,7 +365,7 @@ class Reading:
             for row in self.cells
         )
         rack = tuple(sorted(("?" if t.uncertain else t.letter or "", t.blank) for t in self.rack))
-        return (cells, rack)
+        return (cells, rack, self.bounds)
 
 
 _PRIORS: tuple[list[str], np.ndarray] | None = None

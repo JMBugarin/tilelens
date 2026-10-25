@@ -61,14 +61,22 @@ stock-font letter shapes (below), and you are only asked about tiles that read u
   crossing words and extensions with it. A tile whose number cannot be read counts at the
   letter's own value. Checked against a real game: this model reproduces the game's score
   (90 after three turns, and 11 for a play the plain values scored 8).
-- **A board that grows.** Letter League adds columns and rows as play nears an edge. With
-  `board.expand` and `board.period` in the profile, the layout repeats into room around the
-  board, the lattice is registered against it (a repeating pattern fits at offsets one period
-  apart, so the offset is chosen from the star on the start square, from where tiles were last
-  seen, or from a tile on the start square), and the board's real extent is measured from the
-  squares that show an empty square's own color. A side that visibly ends is a wall beyond it;
-  a side that runs off the screen is unknown, as before. A board of 27 columns that grew to 30
-  is scanned over all 30.
+- **A board that grows.** Letter League adds columns and rows as words near an edge (a 27x19
+  board became 30x19, and later grew taller). With `board.expand` and `board.period` in the
+  profile, the layout repeats into room around the board. The board's edges are measured on
+  the squares themselves, every 0.7 s while tracking, without finding the board again:
+  - only squares that show an empty square's own color count (plain squares must match the
+    plain color closely, because the background around the board is almost the same);
+  - the board is the dense stretch of such squares; a few stray squares elsewhere (a panel's
+    corner) do not stretch it, and a line that is covered only a little still belongs to it;
+  - a side is the board's edge only when the line just beyond it is the plain background; a
+    line that is covered, off screen or of another color leaves that side open (unknown),
+    so a panel over the board's top rows never cuts the board short;
+  - only squares in the measured stretch are read, so nothing outside the board is taken for
+    a tile or used to check alignment; a change in the edges counts as a change in the
+    position, so the search runs again for the larger board.
+  A repeating pattern fits at offsets one period apart; the offset is chosen from the star on
+  the start square, from where tiles were last seen, or from a tile on the start square.
 - **The starting round.** Before the first word the start square shows a spinning purple star.
   A star on a square that still has its own color is read as an empty square (never as an
   unreadable tile, which used to leave the start square unknown and block every suggestion

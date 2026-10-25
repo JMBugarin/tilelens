@@ -120,12 +120,16 @@ def _merged_value_mark(labels, main, value_pixels, size) -> np.ndarray | None:
 
 
 def extract_glyph(
-    crop_bgr: np.ndarray, background_lab: np.ndarray, thr_scale: float | None = None
+    crop_bgr: np.ndarray,
+    background_lab: np.ndarray,
+    thr_scale: float | None = None,
+    retry: bool = False,
 ) -> Glyph | None:
     """Separate the letter from the tile background, dropping a corner point-value mark.
 
     thr_scale (a fraction of the darkest pixel's distance) raises the threshold, so that a
-    fainter point value that touches the letter falls away from it."""
+    fainter point value that touches the letter falls away from it; retry does that on its own
+    when the outline reaches the edge (for tiles, not for printed square labels)."""
     size = crop_bgr.shape[0]
     lab = to_lab(crop_bgr)
     dist = np.linalg.norm(lab - background_lab[None, None, :3], axis=2)
@@ -228,12 +232,12 @@ def extract_glyph(
     mx0, my0, mw, mh = stats[main, :4]
     lim = margin + 1
     touches = mx0 <= lim or my0 <= lim or mx0 + mw >= size - lim or my0 + mh >= size - lim
-    if touches and thr_scale is None:
+    if touches and thr_scale is None and retry:
         # a gray point value that joins the black letter pulls its outline to the edge
         for scale in (0.55, 0.7):
-            retry = extract_glyph(crop_bgr, background_lab, scale)
-            if retry is not None and not retry.touches_edge:
-                return retry
+            again = extract_glyph(crop_bgr, background_lab, scale)
+            if again is not None and not again.touches_edge:
+                return again
     vec = mask_to_vec(letter)
     if vec is None:
         return None

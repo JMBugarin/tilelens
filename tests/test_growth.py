@@ -11,6 +11,7 @@ from collections import Counter
 from pathlib import Path
 
 import cv2
+import numpy as np
 import pytest
 from conftest import TINY_RAW, make_profile
 
@@ -119,15 +120,33 @@ def grown_profile():
 def test_the_screenshot_board_is_30_columns_wide_not_27(grown_profile):
     img = cv2.imread(str(FIXTURES / "board-grown.png"))
     view = locate_board(img, grown_profile)
-    r0, c0, r1, c1 = view.extent
+    rows, cols = np.nonzero(view.visible)
+    r0, r1, c0, c1 = rows.min(), rows.max(), cols.min(), cols.max()
     assert (r1 - r0 + 1, c1 - c0 + 1) == (19, 30)  # three columns more than the profile's 27
+    assert view.visible.sum() == 19 * 30
     assert view.match_rate > 0.9 and view.margin > 0.25
-    # the board starts at the core's own left edge and the start square is where it should be
+    # the board starts at the core's own left edge, and its left, right and bottom are walls
     assert c0 == grown_profile.expand
-    assert view.visible[r0 : r1 + 1, c0 : c1 + 1].sum() >= 0.9 * 19 * 30
+    assert view.extent[1] == c0 and view.extent[3] == c1 and view.extent[2] == r1
     # every square in the three added columns is in view, so they are scanned
     assert view.visible[r0 + 3 : r1 + 1, c1 - 2 : c1 + 1].all()
-    assert not view.visible[:, : c0 - 1].any() and not view.visible[:, c1 + 1 :].any()
+
+
+def test_a_covered_line_is_not_taken_for_the_edge_of_the_board(grown_profile):
+    """Only a line of plain background beyond the squares is an edge; a panel over the board's
+    top rows leaves the top open instead of cutting the board short."""
+    img = cv2.imread(str(FIXTURES / "board-grown.png"))
+    view = locate_board(img, grown_profile)
+    assert view.extent[0] == 0
+
+
+def test_alignment_is_stable_frame_after_frame(grown_profile):
+    """A board that is found must stay found: no locating again on every frame."""
+    img = cv2.imread(str(FIXTURES / "board-grown.png"))
+    reader = ViewReader(Calibration.load(FIXTURES / "calibration.json"), grown_profile)
+    for _ in range(4):
+        reader.read(img)
+    assert reader.locates == 1 and reader.is_aligned(img)
 
 
 def test_tiles_are_found_on_the_grown_board_and_nothing_outside_it(grown_profile):
@@ -184,3 +203,102 @@ def test_a_play_in_the_new_columns_is_possible(grown_profile):
 def test_the_profile_file_of_the_fixture_is_valid_toml():
     tomllib.loads((FIXTURES / "growing-profile.toml").read_text())
     assert Tile(0, 0, "A")
+
+
+BACKGROUND_BGR = (178, 214, 242)  # the peach around the board in the screenshot
+
+
+def without_new_columns(img):
+    """The screenshot as it looked before the board grew: its last three columns not there."""
+    out = img.copy()
+    out[75:1060, 1634:1796] = BACKGROUND_BGR
+    return out
+
+
+def test_the_board_growing_during_play_is_picked_up_without_losing_alignment(
+    grown_profile, monkeypatch
+):
+    import tilelens.vision.autoread as autoread
+
+    monkeypatch.setattr(autoread, "EXTENT_EVERY", 0.0)
+    after = cv2.imread(str(FIXTURES / "board-grown.png"))
+    before = without_new_columns(after)
+    reader = ViewReader(Calibration.load(FIXTURES / "calibration.json"), grown_profile)
+    first = reader.read(before)
+    cols = np.nonzero(first.view.visible.any(axis=0))[0]
+    assert cols.max() - cols.min() + 1 == 27
+    assert first.view.visible.sum() == 19 * 27
+    locates = reader.locates
+    for _ in range(3):
+        grown = reader.read(after)
+    cols = np.nonzero(grown.view.visible.any(axis=0))[0]
+    assert cols.max() - cols.min() + 1 == 30 and grown.view.visible.sum() == 19 * 30
+    assert reader.locates == locates, "the board was not found again, only measured again"
+    assert grown.bounds[3] - grown.bounds[1] + 1 == 30
+    tiles = lambda r: {(t.row, t.col): t.letter for t in r.placed().tiles()}  # noqa: E731
+    assert tiles(first).items() <= tiles(grown).items(), "tiles keep their squares"
+
+
+def test_growth_is_noticed_by_the_live_loop(grown_profile, monkeypatch):
+    import tilelens.vision.autoread as autoread
+    from tilelens.state.controller import LiveController, Status
+    from tilelens.state.worker import InlineSolver
+
+    monkeypatch.setattr(autoread, "EXTENT_EVERY", 0.0)
+    after = cv2.imread(str(FIXTURES / "board-grown.png"))
+    before = without_new_columns(after)
+
+    class Frames:
+        frame = before
+
+        def grab(self):
+            return self.frame
+
+    words = Lexicon.from_words(["GO", "NO", "ON", "HO", "OH", "UH", "AT", "TA"])
+    clock = [0.0]
+    src = Frames()
+    reader = ViewReader(Calibration.load(FIXTURES / "calibration.json"), grown_profile)
+    ctrl = LiveController(
+        src,
+        reader,
+        InlineSolver(MoveGenerator(grown_profile, words, use_cache=False)),
+        grown_profile,
+        words.version,
+        clock=lambda: clock[0],
+        stable_frames=2,
+        lexicon=words,
+    )
+    seen = []
+    for frame in [before] * 4 + [after] * 6:
+        src.frame = frame
+        clock[0] += 0.1
+        ctrl.tick()
+        seen.append((ctrl.snapshot.status, ctrl.snapshot.board and ctrl.snapshot.board.bounds))
+    widths = {b[3] - b[1] + 1 for _, b in seen if b}
+    assert 27 in widths and 30 in widths, widths
+    assert reader.locates == 1
+    assert not any(s == Status.NOT_VISIBLE for s, _ in seen)
+
+
+def test_a_repeating_pattern_is_lined_up_with_where_tiles_were_seen(grown_profile):
+    """The premium pattern repeats every 12 squares, so a view fits at several positions. The
+    one that keeps remembered tiles on tiles is chosen, which keeps indices steady."""
+    from tilelens.vision.locate import BoardHint
+
+    img = cv2.imread(str(FIXTURES / "board-grown.png"))
+    reader = ViewReader(Calibration.load(FIXTURES / "calibration.json"), grown_profile)
+    reading = reader.read(img)
+    tiles = frozenset(
+        (r, c)
+        for r, row in enumerate(reading.cells)
+        for c, cell in enumerate(row)
+        if cell.letter and not cell.uncertain
+    )
+    base = locate_board(img, grown_profile, hint=BoardHint(tiles))
+    assert base.grid.x0 == pytest.approx(reader.view.grid.x0)
+    shifted = locate_board(
+        img, grown_profile, hint=BoardHint(frozenset((r + 12, c) for r, c in tiles))
+    )
+    # the same picture, indexed 12 rows further down
+    assert shifted.grid.y0 == pytest.approx(base.grid.y0 - 12 * base.grid.pitch_y)
+    assert shifted.grid.x0 == pytest.approx(base.grid.x0)

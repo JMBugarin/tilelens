@@ -32,6 +32,8 @@ from tilelens.vision.locate import (
     _layout_classes,
     _palette,
     locate_board,
+    measure_extent,
+    with_extent,
 )
 from tilelens.vision.recognizer import (
     COMMITTED,
@@ -70,6 +72,7 @@ LETTER_CONTRAST = 45.0
 MIN_STAMP_PITCH = 44.0  # full-resolution pixels per square
 MIN_DIGIT_PX = 10.0
 STAR_FRACTION = 0.015
+EXTENT_EVERY = 0.7  # seconds between measurements of the board's edges
 LIGHT_INK = 60.0
 STAMP_LETTER_MIN = 0.9  # only a tile whose letter is certain is stamped
 DEFAULT_RACK_ZONE = (0.0, 1.0, 0.35, 1.0)  # whole width: the game window can sit anywhere
@@ -399,6 +402,7 @@ class ViewReader:
             else calibration.rack_proto.mean[:3]
         )
         self.locates = 0
+        self._extent_at = 0.0
         self.hint = BoardHint()
         self.starts = {tuple(sq) for sq in profile.start_squares}
         self._cache: dict[int, tuple] = {}
@@ -433,14 +437,26 @@ class ViewReader:
                 premium_ok += d < RING_OK
         return ok >= 0.45 * len(pick) and (premium_seen < 3 or premium_ok >= 0.6 * premium_seen)
 
+    def _refresh_extent(self, img: np.ndarray) -> None:
+        """The board grows as words near its edge: measure its edges again now and then."""
+        now = time.monotonic()
+        if now - self._extent_at < EXTENT_EVERY:
+            return
+        self._extent_at = now
+        measured = measure_extent(img, self.profile, self.view)
+        if measured[0] != self.view.extent or measured[1] != self.view.span:
+            self.view = with_extent(self.view, measured, self.profile)
+
     def is_aligned(self, img: np.ndarray) -> bool:
         """Cheap check that the last located board is still where it was in this frame."""
         return self.view is not None and self._still_aligned(img, self.view)
 
     def locate(self, img: np.ndarray) -> BoardView:
         if self.view is not None and self._still_aligned(img, self.view):
+            self._refresh_extent(img)
             return self.view
         self.view = locate_board(img, self.profile, hint=self.hint)
+        self._extent_at = time.monotonic()
         self._size = (img.shape[1], img.shape[0])
         self.locates += 1
         return self.view
@@ -643,7 +659,7 @@ class ViewReader:
             return CellRead()
         if _corner_covered(crop_, feat):
             return CellRead(state=UNSEEN)
-        glyph = extract_glyph(crop_, feat)
+        glyph = extract_glyph(crop_, feat, retry=not ring_ok)
         key = self.keys[r][c]
         if glyph is None or glyph.ink_fraction < 0.012:
             return CellRead() if ring_ok else CellRead(state=UNSEEN)
