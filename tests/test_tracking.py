@@ -168,6 +168,7 @@ def test_tiles_taken_from_the_rack_keep_the_suggestion(setup):
     assert len(solver.submitted) == 1
 
 
+@pytest.mark.gui
 def test_auto_calibration_dialog_learns_from_the_rack(setup):
     from PySide6.QtWidgets import QApplication
 
