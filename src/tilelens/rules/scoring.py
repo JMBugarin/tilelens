@@ -40,12 +40,16 @@ class MoveScore:
     total: int
 
 
-def score_word(word: FormedWord, profile: Profile) -> WordScore:
+def score_word(
+    word: FormedWord, profile: Profile, stamps: dict[tuple[int, int], int] | None = None
+) -> WordScore:
     cells = []
     letter_sum = 0
     word_mults = []
     for c in word.cells:
         value = profile.tile_value(c.letter, c.blank)
+        if not c.new and not c.blank and stamps:
+            value = stamps.get((c.row, c.col), value)
         lm = profile.letter_multiplier(c.row, c.col) if c.new else 1
         if c.new:
             word_mults.append(profile.word_multiplier(c.row, c.col))
@@ -57,19 +61,24 @@ def score_word(word: FormedWord, profile: Profile) -> WordScore:
     )
 
 
-def score_words(words: Sequence[FormedWord], tiles_used: int, profile: Profile) -> MoveScore:
-    scored = tuple(score_word(w, profile) for w in words)
+def score_words(
+    words: Sequence[FormedWord],
+    tiles_used: int,
+    profile: Profile,
+    stamps: dict[tuple[int, int], int] | None = None,
+) -> MoveScore:
+    scored = tuple(score_word(w, profile, stamps) for w in words)
     bonus = profile.full_rack_bonus if tiles_used == profile.full_rack_tiles else 0
     return MoveScore(scored, tiles_used, bonus, sum(w.total for w in scored) + bonus)
 
 
 def score_placement(board: Board, tiles: Sequence[Tile], profile: Profile) -> MoveScore:
     """Score without checking legality; use evaluate() for checked scoring."""
-    return score_words(formed_words(board, tiles), len(tiles), profile)
+    return score_words(formed_words(board, tiles), len(tiles), profile, board.stamps)
 
 
 def evaluate(
     board: Board, rack: Counter, tiles: Sequence[Tile], profile: Profile, lexicon
 ) -> MoveScore:
     words = check_placement(board, rack, tiles, profile, lexicon)
-    return score_words(words, len(tiles), profile)
+    return score_words(words, len(tiles), profile, board.stamps)

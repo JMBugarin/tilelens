@@ -36,6 +36,7 @@ CACHE_SIZE = 64
 REMEMBERED_MIN = 0.8
 ASSUMED_SHOWN = 8.0
 SOFT_AFTER = 0.6
+HELD_UNSEEN = 4.0
 
 
 class Status(StrEnum):
@@ -84,6 +85,7 @@ class HeldPlay:
     full_frames: int = 0
     last_state: str = ""
     new_letters: bool = False
+    unseen_since: float | None = None
 
 
 class LiveController:
@@ -109,6 +111,8 @@ class LiveController:
         self.lexicon = lexicon
         self.soft = soft
         self.on_misaligned: Callable[[], None] | None = None
+        self.on_event: Callable[[str], None] | None = None
+        self.events: list[tuple[float, str]] = []
         self.source = source
         self.recognizer = recognizer
         self.solver = solver
@@ -143,6 +147,7 @@ class LiveController:
         self._refining: tuple[str, dict] | None = None
         self.last_reading: Reading | None = None
         self._aligned_at = -1e9
+        self._rack_tiles = 0
         self._soft_sig = None
         self._soft_since = 0.0
         self._assumed: tuple[str, float] | None = None
@@ -176,6 +181,8 @@ class LiveController:
         return 1.0 / self.hz
 
     def pause(self) -> None:
+        if self.hold is not None:
+            self.event("hold released: paused")
         self.hold = None
         self.paused = True
         self.solver.cancel()
@@ -188,6 +195,8 @@ class LiveController:
             self._set(Status.READING, "Reading")
 
     def rescan(self) -> None:
+        if self.hold is not None:
+            self.event("hold released: rescan")
         self.hold = None
         self._reset_stability()
         self._force = True
@@ -306,6 +315,7 @@ class LiveController:
         size = self._confirmed_rack_size or self.profile.rack_size
         if self.hold is None:
             self.hold = HeldPlay(index, size)
+            self.event(f"hold started on card {index + 1}")
         else:
             self.hold.index = index
         self.solver.cancel()
@@ -314,27 +324,39 @@ class LiveController:
                   solve_ms=snap.solve_ms, **self._keep(snap))  # fmt: skip
         return True
 
-    def release_hold(self) -> None:
+    def release_hold(self, reason: str = "released") -> None:
         """Back to live tracking: read the board and rack afresh."""
         if self.hold is None:
             return
         self.hold = None
+        self.event(f"hold released: {reason}")
         self._reset_stability()
         self._force = True
         self._set(Status.READING, "Reading")
 
+    def event(self, text: str) -> None:
+        self.events.append((self.clock(), text))
+        del self.events[:-200]
+        if self.on_event:
+            self.on_event(text)
+
     def _observe_held(self, frame, now: float) -> None:
-        """While held only the board's position is followed, so the ghost tiles stay put."""
+        """While held only the board's position is followed, so the ghost tiles stay put.
+
+        The hold ends only when the rack was seen short (tiles were placed) and is then full
+        again with different letters for several frames in a row. A flicker, a hover, a dragged
+        tile hiding the board or a recalled tile never ends it.
+        """
+        hold = self.hold
         if frame is None:
-            self.last_grid = None
+            self._held_unseen(now)
             return
         changed = self._watch_regions(frame).update(frame)
         if changed:
             self._last_change = now
-        hold = self.hold
         if not (changed or self._force):
             # a still screen keeps confirming what the last frame showed
-            if hold.last_state == "full":
+            if hold.last_state == "full" and hold.new_letters:
                 hold.full_frames += 1
                 self._maybe_release()
             return
@@ -342,29 +364,45 @@ class LiveController:
         reading = self.recognizer.read(frame)
         self.last_reading = reading
         if not reading.visible:
-            self.last_grid = None
-            hold.last_state = ""
+            self._held_unseen(now)
             return
+        hold.unseen_since = None
         self.last_grid = reading.grid
         self.last_frame_size = (frame.shape[1], frame.shape[0])
         if len(reading.rack) < hold.rack_size:
             hold.last_state = "short"
             hold.short_frames += 1
             hold.full_frames = 0
-            hold.seen_short = hold.seen_short or hold.short_frames >= self.stable_frames
+            hold.new_letters = False
+            if not hold.seen_short and hold.short_frames >= self.stable_frames:
+                hold.seen_short = True
+                self.event("hold: tiles are being placed")
             return
         hold.short_frames = 0
         hold.last_state = "full"
-        hold.full_frames += 1
-        hold.new_letters = not reading.rack_uncertain and reading.rack_counter() != (
-            self._snapshot.rack or Counter()
-        )
+        held_rack = self._snapshot.rack or Counter()
+        clear = Counter(t.letter for t in reading.rack if t.letter and not t.uncertain)
+        # a tile that is not in the held rack, or one too unclear to say, is a new letter
+        same = bool(clear - held_rack) or reading.rack_uncertain
+        if same != hold.new_letters:
+            hold.full_frames = 0
+        hold.new_letters = same
+        if same:
+            hold.full_frames += 1
         self._maybe_release()
+
+    def _held_unseen(self, now: float) -> None:
+        """The board is hidden for a moment (a hand over it): keep the last alignment."""
+        hold = self.hold
+        if hold.unseen_since is None:
+            hold.unseen_since = now
+        if now - hold.unseen_since > HELD_UNSEEN:
+            self.last_grid = None
 
     def _maybe_release(self) -> None:
         hold = self.hold
-        if hold.full_frames >= self.stable_frames and (hold.seen_short or hold.new_letters):
-            self.release_hold()
+        if hold.seen_short and hold.new_letters and hold.full_frames >= self.stable_frames:
+            self.release_hold("rack refilled with new letters")
 
     def _not_visible(self, why: str) -> None:
         self.solver.cancel()
@@ -413,6 +451,7 @@ class LiveController:
         consolidate = getattr(self.recognizer, "consolidate", None)
         if consolidate is not None and reading.confident:
             consolidate(reading)
+        self._rack_tiles = len(reading.rack)
         remember = getattr(self.recognizer, "remember_rack", None)
         if remember is not None and not reading.rack_uncertain:
             remember(reading)
@@ -438,7 +477,13 @@ class LiveController:
         self._walled = asked
         for r, c in reading.uncertain_cells:
             reading.cells[r][c] = CellRead(state=UNSEEN)
-        return reading.rack_counter()
+        # a guess at an unclear tile could make a suggestion nobody can play, so searches use
+        # only the tiles that are certain; the panel asks about the other
+        return Counter(
+            BLANK if t.blank else t.letter
+            for t in reading.rack
+            if (t.blank or t.letter) and not t.uncertain
+        )
 
     @staticmethod
     def _touches_tile(reading: Reading, r: int, c: int) -> bool:
@@ -465,7 +510,10 @@ class LiveController:
             name = f"rack tile {where + 1}" if kind == "rack" else f"square {square_name(*where)}"
             more = f" (+{len(unsure) - 1} more)" if len(unsure) > 1 else ""
             guess_text = f"looks like {guess}" if guess else "is unclear"
-            notice = f"{name[0].upper()}{name[1:]} {guess_text}: tap the right letter{more}"
+            notice = (
+                f"{name[0].upper()}{name[1:]} {guess_text}; "
+                f"plays leave it out until you tap its letter{more}"
+            )
         elif fixed is not None and any(was != now for _, _, was, now in fixed.changed):
             r, c, was, now = next(x for x in fixed.changed if x[2] != x[3])
             notice = f"Read {was or '?'} at {square_name(r, c)} as {now}: only {now} makes a word"
@@ -513,7 +561,13 @@ class LiveController:
                     learn[(r, c)] = (letter, blank)
                 state = cell.state if cell.state in (COMMITTED, RECENT) else COMMITTED
                 reading.cells[r][c] = replace(
-                    cell, letter=letter, blank=blank, state=state, uncertain=False, reason=""
+                    cell,
+                    letter=letter,
+                    blank=blank,
+                    state=state,
+                    uncertain=False,
+                    reason="",
+                    value=cell.value if cell.letter == letter else None,
                 )
         if learn and frame is not None:
             self.recognizer.learn_from_corrections(frame, reading, learn)
@@ -632,7 +686,7 @@ class LiveController:
         return "; ".join(parts) or "Check tiles"
 
     def _confirm(self, board: Board, rack: Counter, order: list[str], now: float) -> None:
-        self._confirmed_rack_size = sum(rack.values())
+        self._confirmed_rack_size = max(sum(rack.values()), self._rack_tiles)
         if self._tiles_removed(board):
             # tiles never leave the board during a game, so this is a new game
             self.memory.forget()
@@ -656,7 +710,7 @@ class LiveController:
             return
         self._submitted_at = now
         self.searches_started += 1
-        self.solver.submit(pid, board.to_rows(), rack_to_str(rack))
+        self.solver.submit(pid, board.to_rows(), rack_to_str(rack), board.stamp_list())
         if self._showing() and self._refines(board, rack):
             snap = self._snapshot
             self._refining = (pid, base)
@@ -768,7 +822,7 @@ class LiveController:
                     played = cell.letter and cell.state not in ("tentative", "unknown")
                     out.append((cell.letter, cell.blank) if played else None)
             cells.append(out)
-        board = Board(len(cells[0]), len(cells), cells)
+        board = Board(len(cells[0]), len(cells), cells, reading.placed().stamps)
         if rack is not None:
             letters = [ch.upper() if ch != BLANK else BLANK for ch in rack if not ch.isspace()]
         else:

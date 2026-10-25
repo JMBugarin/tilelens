@@ -47,6 +47,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scr.add_argument("--image", help="read this screenshot instead of capturing the screen")
     scr.add_argument("--profile", help="profile to use (defaults to the one in your settings)")
+    words = sub.add_parser(
+        "words", help="word list baseline and the game's confirmed word overrides"
+    )
+    words.add_argument("--profile", help="profile to use (defaults to the one in your settings)")
+    wsub = words.add_subparsers(dest="words_command", required=True)
+    wsub.add_parser("status", help="which list is used and which overrides apply")
+    inst = wsub.add_parser("install-baseline", help="install the baseline word list")
+    inst.add_argument("--file", help="use this list instead of downloading ENABLE")
+    inst.add_argument("--name", default="enable1")
+    chk = wsub.add_parser("check", help="is each word accepted by the lists in use?")
+    chk.add_argument("word", nargs="+")
+    for kind, text in (
+        ("allow", "record a word the game accepted"),
+        ("block", "record a word the game rejected"),
+    ):
+        w = wsub.add_parser(kind, help=text)
+        w.add_argument("word")
+        w.add_argument("--evidence", required=True, help="what you saw, so it can be checked")
+        w.add_argument("--date", help="YYYY-MM-DD (default: today)")
+    rem = wsub.add_parser("forget", help="remove a recorded override")
+    rem.add_argument("word")
     sub.add_parser("demo", help="run against the built-in fake game (no screen capture needed)")
 
     imp = sub.add_parser("import-words", help="normalize a word list into the app data folder")
@@ -285,6 +306,88 @@ def cmd_check_screen(args) -> int:
     return 0
 
 
+def _words_context(args):
+    from tilelens.rules.overrides import Overrides, default_path
+    from tilelens.rules.profile import demo_profile_dir, load_profile
+    from tilelens.ui.settings import Settings
+
+    settings = Settings.load()
+    profile = load_profile(args.profile or settings.profile or demo_profile_dir() / "x.toml")
+    path = Path(settings.words) if settings.words else profile.word_list
+    where = default_path(profile.source)
+    return profile, settings, path, where, Overrides.load(where)
+
+
+def cmd_words(args) -> int:
+    from tilelens.rules.lexicon import WordListError, lexicon_for
+    from tilelens.rules.overrides import OverrideError
+    from tilelens.rules.profile import ProfileError
+    from tilelens.solver.wordlists import install_baseline, read_manifest
+
+    try:
+        if args.words_command == "install-baseline":
+            report = install_baseline(args.file, args.name)
+            manifest = read_manifest(report.path)
+            print(f"installed {report.words} words to {report.path}")
+            print(f"edition {manifest['edition']}, sha256 {manifest['sha256'][:16]}...")
+            print(manifest["note"])
+            print(f'set  words.path = "{report.path}"  in your profile to use it')
+            return 0
+        profile, settings, path, where, overrides = _words_context(args)
+        if args.words_command in ("allow", "block"):
+            word = overrides.record(args.words_command, args.word, args.evidence, args.date)
+            if where is None:
+                raise OverrideError("this profile has no file, so overrides have nowhere to live")
+            overrides.save(where)
+            print(f"{word} recorded as {args.words_command}ed in {where}")
+            print("Only record a word the game rejected as a word. A placement can also be "
+                  "refused for where it sits or for another word it forms.")  # fmt: skip
+            return 0
+        if args.words_command == "forget":
+            if not overrides.remove(args.word):
+                print(f"{args.word.upper()} has no override")
+                return 1
+            overrides.save(where)
+            print(f"removed the override for {args.word.upper()}")
+            return 0
+        lexicon = lexicon_for(profile, path)
+        if args.words_command == "check":
+            for word in args.word:
+                key = word.upper()
+                kind = overrides.status(key)
+                base = key in lexicon.words if kind is None else None
+                verdict = {
+                    "allow": "accepted (override)",
+                    "block": "rejected (override)",
+                    None: "accepted (baseline)" if base else "not in the list",
+                }[kind]
+                print(f"{key}: {verdict}")
+            return 0
+        manifest = read_manifest(Path(path)) if path else {}
+        print(f"profile            {profile.name}")
+        print(f"baseline list      {path}")
+        if manifest:
+            print(f"  edition          {manifest.get('edition')} ({manifest.get('words')} words)")
+            print(f"  source           {manifest.get('source')}")
+            print(
+                f"  installed        {manifest.get('installed')}  sha256 {manifest['sha256'][:16]}"
+            )
+            print(f"  note             {manifest.get('note')}")
+        else:
+            print("  no manifest: where this list came from is not recorded")
+        print(f"  baseline version {lexicon.baseline}")
+        print(f"overrides file     {where}")
+        print(f"  overrides version {lexicon.overrides or '(none)'}")
+        for kind in ("allow", "block"):
+            for word, entry in sorted(getattr(overrides, kind).items()):
+                print(f"  {kind:5s} {word}  {entry.get('date')}  {entry.get('evidence')}")
+        print(f"words in use       {len(lexicon)}")
+        return 0
+    except (OverrideError, WordListError, ProfileError, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
 def versions() -> dict[str, str]:
     import platform
     from importlib.metadata import PackageNotFoundError, version
@@ -379,6 +482,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_read(args)
     if args.command == "doctor":
         return cmd_doctor(args)
+    if args.command == "words":
+        return cmd_words(args)
     if args.command == "check-screen":
         return cmd_check_screen(args)
     if args.command == "demo":

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 
@@ -16,6 +16,10 @@ class Lexicon:
     version: str
     skipped: int = 0
     source: Path | None = field(default=None, compare=False)
+    baseline: str = ""  # hash of the baseline list alone
+    overrides: str = ""  # hash of the allow and block lists alone
+    allowed: int = field(default=0, compare=False)
+    blocked: int = field(default=0, compare=False)
 
     def __contains__(self, word: str) -> bool:
         return word in self.words
@@ -64,8 +68,42 @@ class Lexicon:
         return lex
 
 
-def lexicon_for(profile, words_path: str | Path | None = None) -> Lexicon:
+def with_overrides(lex: Lexicon, overrides, alphabet: Iterable[str] | None = None) -> Lexicon:
+    """The baseline plus allowed words minus blocked ones. Overrides always win.
+
+    The version names both parts, so a change to either one changes every position id and the
+    cached search graph.
+    """
+    if not overrides.allow and not overrides.block:
+        return replace(lex, baseline=lex.version)
+    allowed = set(overrides.allow)
+    if alphabet is not None:
+        allowed = {w for w in allowed if set(w) <= set(alphabet)}
+    words = (lex.words | allowed) - set(overrides.block)
+    return replace(
+        lex,
+        words=frozenset(words),
+        version=f"{lex.version}+{overrides.version}",
+        baseline=lex.version,
+        overrides=overrides.version,
+        allowed=len(allowed),
+        blocked=len(set(overrides.block) & lex.words),
+    )
+
+
+def lexicon_for(
+    profile, words_path: str | Path | None = None, overrides_path: str | Path | None = None
+) -> Lexicon:
+    """The profile's word list with its word overrides applied."""
+    from tilelens.rules.overrides import Overrides, default_path
+
     path = words_path or profile.word_list
     if path is None:
         raise WordListError("no word list: set words.path in the profile or choose one")
-    return Lexicon.load(path, profile.alphabet)
+    base = Lexicon.load(path, profile.alphabet)
+    where = overrides_path or default_path(getattr(profile, "source", None))
+    try:
+        overrides = Overrides.load(where)
+    except ValueError as exc:
+        raise WordListError(str(exc)) from None
+    return with_overrides(base, overrides, profile.alphabet)

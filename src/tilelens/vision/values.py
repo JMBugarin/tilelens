@@ -12,11 +12,13 @@ from tilelens.vision.cells import PATCH, crop, mask_to_vec, patch_features, to_l
 
 DIGIT_MIN = 0.80
 DIGIT_MARGIN = 0.06
+ALT_MIN = 0.78
 MIN_AREA = 6
 SIDE = 96
 VOTES_NEEDED = 3
 VOTE_SHARE = 0.8
 MAX_VALUE = 20
+MAX_STAMP = 999
 
 _DIGITS: tuple[list[str], np.ndarray] | None = None
 
@@ -71,22 +73,55 @@ def _value_mask(inner: np.ndarray, ring: np.ndarray) -> np.ndarray | None:
     return out if out.any() else None
 
 
-def tile_value(img: np.ndarray, rect: tuple[int, int, int, int]) -> int | None:
-    """The number printed on the tile at rect (full-resolution pixels), or None."""
+def _digit_choices(mask: np.ndarray) -> list[tuple[str, float]]:
+    """The best few digits a shape could be, best first."""
+    chars, vecs = digit_priors()
+    vec = mask_to_vec(mask)
+    if vec is None or not chars:
+        return []
+    best = (vecs @ vec).max(axis=0)
+    order = np.argsort(-best)[:3]
+    return [(chars[int(i)], float(best[i])) for i in order if best[i] >= ALT_MIN]
+
+
+def tile_value(
+    img: np.ndarray,
+    rect: tuple[int, int, int, int],
+    limit: int = MAX_VALUE,
+    base: int | None = None,
+    inset: float = 0.06,
+    min_height: float = 0.0,
+) -> int | None:
+    """The number printed on the tile at rect (full-resolution pixels), or None.
+
+    With base (the letter's own value) a stamped number is accepted when some close reading
+    of its digits is the base times premiums, which settles 3 against 5 on a thick font.
+    """
     x, y, w, h = rect
     if w < 24 or h < 24:
         return None
     tile = cv2.resize(crop(img, rect), (PATCH, PATCH), interpolation=cv2.INTER_AREA)
     ring = patch_features(to_lab(tile))[:3]
-    inner = crop(img, (x + round(w * 0.06), y + round(h * 0.06), round(w * 0.88), round(h * 0.88)))
+    inner = crop(
+        img,
+        (
+            x + round(w * inset),
+            y + round(h * inset),
+            round(w * (1 - 2 * inset)),
+            round(h * (1 - 2 * inset)),
+        ),
+    )
     inner = cv2.resize(inner, (SIDE, SIDE), interpolation=cv2.INTER_AREA)
     mask = _value_mask(inner, ring)
     if mask is None:
         return None
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
     comps = [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] >= MIN_AREA]
-    if not comps or len(comps) > 2:
+    if not comps or len(comps) > (3 if limit > MAX_VALUE else 2):
         return None
+    scale = w * (1 - 2 * inset) / SIDE  # pixels of the original per pixel of the working crop
+    if min_height and max(stats[i, cv2.CC_STAT_HEIGHT] for i in comps) * scale < min_height:
+        return None  # digits only a few pixels tall cannot be told apart reliably
     comps.sort(key=lambda i: stats[i, cv2.CC_STAT_LEFT])
     masks = [labels == i for i in comps]
     if len(masks) == 1:
@@ -98,6 +133,8 @@ def tile_value(img: np.ndarray, rect: tuple[int, int, int, int]) -> int | None:
             left[:, cut:] = False
             right[:, :cut] = False
             masks = [left, right]
+    if base:
+        return _reachable_reading(masks, base, limit)
     text = ""
     for m in masks:
         d = _digit(m)
@@ -105,7 +142,22 @@ def tile_value(img: np.ndarray, rect: tuple[int, int, int, int]) -> int | None:
             return None
         text += d
     value = int(text)
-    return value if 0 < value <= MAX_VALUE else None
+    return value if 0 < value <= limit else None
+
+
+def _reachable_reading(masks, base: int, limit: int) -> int | None:
+    from itertools import product
+
+    choices = [_digit_choices(m) for m in masks]
+    if any(not c for c in choices):
+        return None
+    best = None
+    for combo in product(*choices):
+        value = int("".join(ch for ch, _ in combo))
+        score = sum(sc for _, sc in combo)
+        if 0 < value <= limit and reachable(value, base) and (best is None or score > best[0]):
+            best = (score, value)
+    return None if best is None else best[1]
 
 
 class ValueVotes:
@@ -124,3 +176,14 @@ class ValueVotes:
             if n >= VOTES_NEEDED and n >= VOTE_SHARE * sum(counts.values()):
                 out[letter] = value
         return out
+
+
+def reachable(value: int, base: int) -> bool:
+    """A stamped value is the letter's value times premiums, which are 2s and 3s."""
+    if base <= 0 or value % base:
+        return False
+    k = value // base
+    for f in (2, 3):
+        while k % f == 0:
+            k //= f
+    return k == 1

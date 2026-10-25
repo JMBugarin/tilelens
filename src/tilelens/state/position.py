@@ -11,6 +11,7 @@ def position_id(board: Board, rack: Counter, profile: Profile, lexicon_version: 
     """Identify everything a search result depends on."""
     parts = [
         "\n".join(board.to_rows()),
+        repr(board.stamp_list()),
         rack_to_str(rack),
         profile.fingerprint(),
         repr(sorted(profile.letter_values.items())),

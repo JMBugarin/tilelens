@@ -44,7 +44,7 @@ from tilelens.vision.recognizer import (
     Recognizer,
     premium_key,
 )
-from tilelens.vision.values import ValueVotes, tile_value
+from tilelens.vision.values import MAX_STAMP, ValueVotes, tile_value
 
 RING_OK = 16.0
 UNIFORM = 9.0
@@ -64,6 +64,9 @@ LABEL_INK = 25.0
 LABEL_MATCH = 0.85
 LABEL_CONTRAST = 35.0
 LETTER_CONTRAST = 45.0
+MIN_STAMP_PITCH = 44.0  # full-resolution pixels per square
+MIN_DIGIT_PX = 10.0
+STAMP_LETTER_MIN = 0.9  # only a tile whose letter is certain is stamped
 DEFAULT_RACK_ZONE = (0.0, 1.0, 0.35, 1.0)  # whole width: the game window can sit anywhere
 
 
@@ -142,15 +145,33 @@ def find_rack(
                 break
         else:
             rows.append([b])
-    best = []
+    best: list[Blob] = []
+    best_mass = 0.0
     for row in rows:
-        sizes = np.array([(b.rect[2] + b.rect[3]) / 2 for b in row])
-        med = float(np.median(sizes))
-        kept = [b for b, sz in zip(row, sizes, strict=True) if abs(sz - med) < 0.2 * med]
-        if len(kept) > len(best):
-            best = kept
+        # a row can hold tiles and other tile-colored shapes of another size (letters of a
+        # button label): the rack is the group of one size that covers the most area
+        for group in _size_groups(row):
+            mass = len(group) * float(np.mean([(b.rect[2] + b.rect[3]) / 2 for b in group])) ** 2
+            if mass > best_mass:
+                best, best_mass = group, mass
     best.sort(key=lambda b: b.rect[0])
     return best[: profile.rack_size]
+
+
+def _size_groups(row: list[Blob]) -> list[list[Blob]]:
+    """Blobs of one row grouped by size, each group within 20% of its median."""
+    items = sorted(row, key=lambda b: (b.rect[2] + b.rect[3]) / 2)
+    groups: list[list[Blob]] = []
+    for b in items:
+        size = (b.rect[2] + b.rect[3]) / 2
+        for g in groups:
+            med = float(np.median([(x.rect[2] + x.rect[3]) / 2 for x in g]))
+            if abs(size - med) < 0.2 * med:
+                g.append(b)
+                break
+        else:
+            groups.append([b])
+    return groups
 
 
 def _label_clusters(glyphs: list[np.ndarray]) -> list[np.ndarray]:
@@ -370,6 +391,7 @@ class ViewReader:
         self._rack_locates = -1
         self._cache_rev: tuple | None = None
         self.values = ValueVotes()
+        self.stamp_memory: dict[tuple[int, int, str], int] = {}
         self.known_values: dict[str, int] = dict(profile.letter_values)
         # what the player said a square or rack tile shows, kept with the glyph it was said of
         self.board_fixes: dict[tuple[int, int], list[tuple[np.ndarray, str | None, bool]]] = {}
@@ -490,6 +512,13 @@ class ViewReader:
                 else:
                     feat, crop_ = cell_sample(board_img, board_grid, r, c)
                     cell = self._read_cell(r, c, feat, crop_)
+                    if (
+                        cell.letter
+                        and not cell.blank
+                        and not cell.uncertain
+                        and cell.letter_score >= STAMP_LETTER_MIN
+                    ):
+                        cell.value = self._stamp(img, grid, r, c, cell.letter)
                 feats[r, c] = feat
                 crops[key] = crop_
                 fresh[key] = (raw, feat, crop_, replace(cell))
@@ -507,8 +536,29 @@ class ViewReader:
         reading.crops = [x if x is not None else np.zeros((CROP, CROP, 3), np.uint8) for x in crops]
         reading.view = view
         reading.rack_glyphs = rack_glyphs
+        reading.base_values = self.known_values
         self._vote_values(img, reading, grid)
         return reading
+
+    def _stamp(self, img: np.ndarray, grid: Grid, r: int, c: int, letter: str) -> int | None:
+        """The number on a played tile: its value with the premiums it was played on, which
+        is what the game counts whenever the tile is used again."""
+        base = self.known_values.get(letter, 0)
+        # a number only a few pixels tall is not worth reading; use what was seen before
+        value = None
+        if grid.pitch_x >= MIN_STAMP_PITCH:
+            rect = grid.cell_rect(r, c)
+            # two readings from slightly different crops must agree, and the digits must be
+            # big enough to tell apart; a number that cannot be read counts at the letter's value
+            a = tile_value(img, rect, MAX_STAMP, base, 0.06, MIN_DIGIT_PX)
+            b = tile_value(img, rect, MAX_STAMP, base, 0.03, MIN_DIGIT_PX)
+            value = a if a == b else None
+        if value is not None:
+            self.stamp_memory[(r, c, letter)] = value
+        else:
+            value = self.stamp_memory.get((r, c, letter))
+        # a tile still showing its own value needs no stamp
+        return None if value is None or value == base else value
 
     def _revision(self) -> tuple:
         """Changes whenever what was learned could change how a square reads."""
@@ -703,6 +753,7 @@ class ViewReader:
     def new_game(self) -> None:
         """Corrections tied to squares belong to one game."""
         self.board_fixes.clear()
+        self.stamp_memory.clear()
 
     def consolidate(self, reading: Reading, per_letter: int = 3, confirmed: bool = False) -> int:
         """Keep board shapes of letters from a fully confirmed reading.
