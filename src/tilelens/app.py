@@ -41,6 +41,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     doc = sub.add_parser("doctor", help="check permissions, platform support and versions")
     doc.add_argument("--solver", action="store_true", help="also start the solver worker")
+    scr = sub.add_parser(
+        "check-screen",
+        help="read the game on screen (or an image) and time every step, without the interface",
+    )
+    scr.add_argument("--image", help="read this screenshot instead of capturing the screen")
+    scr.add_argument("--profile", help="profile to use (defaults to the one in your settings)")
     sub.add_parser("demo", help="run against the built-in fake game (no screen capture needed)")
 
     imp = sub.add_parser("import-words", help="normalize a word list into the app data folder")
@@ -178,6 +184,107 @@ def cmd_read(args) -> int:
     return 0 if reading.confident else 3
 
 
+def cmd_check_screen(args) -> int:
+    """What TileLens sees right now, step by step, with timings: the first thing to run when
+    something reads wrong."""
+    import time
+
+    import cv2
+
+    from tilelens.rules.lexicon import lexicon_for
+    from tilelens.rules.profile import demo_profile_dir, load_profile
+    from tilelens.state.controller import LiveController, Status
+    from tilelens.state.worker import InlineSolver
+    from tilelens.ui.settings import Settings
+    from tilelens.vision.autoread import NeedsLetters, ViewReader, calibrate_unaided
+    from tilelens.vision.recognizer import Calibration, CalibrationError
+
+    settings = Settings.load()
+    profile = load_profile(args.profile or settings.profile or demo_profile_dir() / "x.toml")
+    if profile.appearance is None:
+        print("check-screen needs a profile with an [appearance] section", file=sys.stderr)
+        return 1
+    if args.image:
+        frame = cv2.imread(args.image)
+        if frame is None:
+            print(f"error: cannot read image {args.image}", file=sys.stderr)
+            return 1
+        grab = lambda: frame  # noqa: E731
+    else:
+        from tilelens.platforms import get_adapter
+        from tilelens.platforms.base import Region
+
+        adapter = get_adapter()
+        import mss
+
+        with mss.mss() as sct:
+            mon = sct.monitors[1]
+        region = Region(mon["left"], mon["top"], mon["width"], mon["height"])
+        grab = lambda: adapter.capture(region)  # noqa: E731
+        frame = grab()
+    print(f"frame {frame.shape[1]}x{frame.shape[0]}")
+    cal = None
+    if settings.calibration and Path(settings.calibration).is_file():
+        cal = Calibration.load(settings.calibration)
+    t0 = time.perf_counter()
+    try:
+        if cal is None or cal.profile_fingerprint != profile.fingerprint():
+            cal = calibrate_unaided(frame, profile)
+            print(f"calibrated without typing in {(time.perf_counter() - t0) * 1000:.0f} ms")
+    except NeedsLetters as exc:
+        print(f"needs a human: tiles {[i + 1 for i in exc.unsure]} (guess {exc.guess})")
+        return 3
+    except CalibrationError as exc:
+        print(f"calibration failed: {exc}")
+        return 3
+    reader = ViewReader(cal, profile)
+    t0 = time.perf_counter()
+    reading = reader.read(frame)
+    first = (time.perf_counter() - t0) * 1000
+    t0 = time.perf_counter()
+    reader.read(frame)
+    again = (time.perf_counter() - t0) * 1000
+    if not reading.visible:
+        print("board not found:", "; ".join(reading.warnings))
+        return 2
+    g = reading.grid
+    seen = int(reading.view.visible.sum())
+    print(f"board: pitch {g.pitch_x:.1f}px, {seen} of {profile.width * profile.height} in view")
+    print(f"locate+read {first:.0f} ms, read when aligned {again:.0f} ms")
+    rack = [
+        ("?" if t.blank else t.letter or "_") + ("!" if t.uncertain else "") for t in reading.rack
+    ]
+    print("rack:", " ".join(rack), f"({len(reading.rack)} tiles)")
+    unsure = [(r, c) for r, c in reading.uncertain_cells]
+    print(f"unclear squares: {len(unsure)}")
+    lexicon = lexicon_for(profile, settings.words)
+    from tilelens.solver.movegen import MoveGenerator
+
+    class Src:
+        def grab(self):
+            return grab()
+
+    now = [0.0]
+    ctrl = LiveController(
+        Src(), reader, InlineSolver(MoveGenerator(profile, lexicon, use_cache=True)), profile,
+        lexicon.version, clock=lambda: now[0], lexicon=lexicon,
+    )  # fmt: skip
+    t0 = time.perf_counter()
+    for _ in range(60):
+        now[0] += 0.1
+        ctrl.tick()
+        if ctrl.snapshot.status in (Status.READY, Status.CHECK, Status.NOT_VISIBLE):
+            break
+    total = (time.perf_counter() - t0) * 1000
+    snap = ctrl.snapshot
+    print(f"settled to {snap.status.value} in {total:.0f} ms of compute")
+    if snap.notice:
+        print("notice:", snap.notice)
+    for i, m in enumerate(snap.result.moves if snap.result else [], 1):
+        print(f"{i}. {m.word} {m.score} pts")
+    return 0
+
+
 def versions() -> dict[str, str]:
     import platform
     from importlib.metadata import PackageNotFoundError, version
@@ -272,6 +379,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_read(args)
     if args.command == "doctor":
         return cmd_doctor(args)
+    if args.command == "check-screen":
+        return cmd_check_screen(args)
     if args.command == "demo":
         from tilelens.ui.app_main import run
 

@@ -113,27 +113,32 @@ class MacAdapter(PlatformAdapter):
             pass
 
     def show_on_all_spaces(self, win_id: int) -> bool:
-        """Let a window appear over full-screen apps and on every Space."""
+        """Let a window appear over another app's full-screen Space, on every Space.
+
+        Qt's tool windows are NSPanels without the non-activating style, and macOS keeps those
+        out of other apps' full-screen Spaces however their collection behavior is set.
+        """
         try:
             import objc
             from AppKit import (
                 NSStatusWindowLevel,
                 NSWindowCollectionBehaviorCanJoinAllSpaces,
                 NSWindowCollectionBehaviorFullScreenAuxiliary,
-                NSWindowCollectionBehaviorStationary,
+                NSWindowStyleMaskNonactivatingPanel,
             )
 
             view = objc.objc_object(c_void_p=int(win_id))
             window = view.window()
             if window is None:
                 return False
+            if hasattr(window, "setFloatingPanel_"):
+                window.setStyleMask_(window.styleMask() | NSWindowStyleMaskNonactivatingPanel)
+                window.setFloatingPanel_(True)
             window.setCollectionBehavior_(
                 NSWindowCollectionBehaviorCanJoinAllSpaces
                 | NSWindowCollectionBehaviorFullScreenAuxiliary
-                | NSWindowCollectionBehaviorStationary
             )
             window.setLevel_(NSStatusWindowLevel)
-            # tool windows hide when another app is clicked; these must stay over the game
             window.setHidesOnDeactivate_(False)
             return True
         except Exception:

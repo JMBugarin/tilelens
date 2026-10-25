@@ -3,7 +3,8 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QColor, QIcon, QPixmap
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from tilelens.capture.source import CallableSource
 from tilelens.platforms import UnsupportedPlatform, get_adapter
@@ -52,10 +53,56 @@ class App:
         elif adapter is not None and adapter.screen_permission() is False:
             adapter.request_permission()
             self.window.show_message(adapter.permission_help())
+        self.window.resize(520, 400)
         self.window.show()
-        if adapter is not None:
-            adapter.show_on_all_spaces(int(self.window.winId()))
-        self.session.start()
+        QTimer.singleShot(0, self._park_window)
+        started = self.session.start()
+        self._make_tray()
+        self.session.panel.settings_clicked.connect(self.show_settings)
+        if not demo and self.session.profile.appearance is not None:
+            self._auto = QTimer()
+            self._auto.timeout.connect(self._auto_start)
+            self._auto.start(2500)
+            self._auto_start()
+        if started and not demo:
+            # the floating panel is the interface while playing; the window would cover the game
+            QTimer.singleShot(1500, self.window.hide)
+
+    def _auto_start(self) -> None:
+        """Without a calibration, keep trying: as soon as the game is on screen, learn it."""
+        if self.session.recognizer is not None or self.session.lexicon is None:
+            if self.session.recognizer is not None:
+                self._auto.stop()
+            return
+        if not self.session.auto_calibrate() and not self.session.panel.isVisible():
+            self.session.show_setup_panel()
+
+    def _make_tray(self) -> None:
+        pix = QPixmap(32, 32)
+        pix.fill(QColor("#22d3ee"))
+        self.tray = QSystemTrayIcon(QIcon(pix))
+        menu = QMenu()
+        menu.addAction("Show settings", self.show_settings)
+        menu.addAction("Pause / resume", self.session.toggle_pause)
+        menu.addAction("Rescan", self.session.rescan)
+        menu.addSeparator()
+        menu.addAction("Quit TileLens", QApplication.quit)
+        self.tray.setContextMenu(menu)
+        self.tray.setToolTip("TileLens")
+        self.tray.show()
+        self._menu = menu
+
+    def show_settings(self) -> None:
+        self._float(self.window)
+        self.window.show()
+        self.window.raise_()
+
+    def _park_window(self) -> None:
+        # bottom-left corner, clear of the game's rack and board
+        screen = self.window.screen().availableGeometry()
+        self.window.move(
+            screen.left() + 8, screen.bottom() - self.window.frameGeometry().height() - 8
+        )
 
     def demo_calibrate(self) -> None:
         samples, hint = calibration_samples(
@@ -68,6 +115,8 @@ class App:
     def _float(self, dlg) -> None:
         """Open over the game, even when it is full screen in its own Space."""
         dlg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        dlg.setWindowFlag(Qt.WindowType.Tool, True)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         if self.adapter is not None:
             self.adapter.show_on_all_spaces(int(dlg.winId()))
 
@@ -82,6 +131,15 @@ class App:
         self.window.show_message("Region saved. Now calibrate.")
 
     def calibrate(self) -> CalibrationDialog | AutoCalibrationDialog | None:
+        if not self.demo and self.session.profile.appearance is not None:
+            if self.session.auto_calibrate():
+                self.window.show_message("")
+                return None
+            if self.session.needs_letters is None:
+                return None  # the reason is in the panel
+            rack = self.session.needs_letters.guess
+        else:
+            rack = ""
         frame = self.session.find_board_screen()
         if frame is None:
             self.window.show_message(
@@ -89,11 +147,11 @@ class App:
                 + (" and check the Screen Recording permission." if not self.demo else ".")
             )
             return None
-        board, rack = None, ""
+        board = None
         ctrl = self.session.controller
         if ctrl is not None and ctrl.last_confirmed is not None:
             board, _, order = ctrl.last_confirmed
-            rack = "".join(order)
+            rack = rack or "".join(order)
         previous = self.session.recognizer.cal if self.session.recognizer else None
         if (
             self.session.profile.appearance is not None

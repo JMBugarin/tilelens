@@ -7,12 +7,41 @@ older position is never shown.
 
 | State | Meaning |
 | --- | --- |
-| Reading | The board changed and is being re-read, or it has not stopped changing yet. "Waiting for board" means tiles are placed but not submitted, or a tile is being dragged. |
+| Reading | The board changed and is being re-read, or it has not stopped changing yet. "Waiting for board" means tiles are placed but not submitted, or a tile is being dragged. "Aligning" means the board moved (zoom, pan, resize) and is being found again. |
 | Solving | The position is stable and confirmed; the search runs in the worker process. |
-| Ready | The cards show the top placements for exactly the position on screen. |
-| Check tiles | Something is uncertain: a square, a rack tile, a blank, a tile color never seen, more copies of a letter than the set holds, or a board size change. The correction grid shows what. |
+| Ready | The cards show the top placements for exactly the position on screen. A **notice** under the cards says when a tile is unsure or a letter was settled by the word list; the cards stay live. |
+| Holding | You clicked a card. The suggestion and its ghost tiles stay frozen while you place your tiles, and tracking resumes by itself when the rack refills. |
+| Check tiles | Only for what cannot be worked around: a board size change, a rack tile with no readable letter, more copies of a letter than the set holds. The correction grid shows what. |
 | Paused | Capturing is stopped and the search is cancelled. |
-| Game not visible | Capture failed (often a missing permission) or the board is not in the region. |
+| Game not visible | Capture failed (often a missing permission) or the board is not in view. |
+
+The panel names these as Tracking, Aligning, Reading rack, Calculating, Holding, Check one tile
+and Board obscured, each with the action to take.
+
+## Unclear tiles do not stop the cards
+
+When a tile is unclear the loop works in this order before it asks anything:
+
+1. **Remembered tiles.** Played tiles never change, so a remembered square settles an unclear
+   read of the same square, and a confirmed rack tile settles a later unclear read of the same
+   glyph.
+2. **Word list.** Every run of two or more tiles is a word. For unclear squares (and weakly
+   read letters inside a word that is not in the list) the next-best letters are tried until
+   all words through the square are valid. A letter settled this way is reported in a notice.
+3. **Neighbors.** A tile always joins the others, so a lone unclear square with no tile beside
+   it is part of the game's interface and is ignored without asking.
+4. **Walls and guesses.** What is still unclear after about 0.6 s (so animations and hover
+   states can pass) is carried on: an unclear board square becomes a wall that no suggestion
+   may touch, and an unclear rack tile keeps its best guess. The panel then shows the best
+   candidates as letter buttons; one tap teaches the tile and the position is read again.
+
+## Holding a suggestion
+
+Clicking a card selects it and holds it (`LiveController.hold_move`). While held, the loop only
+follows the board's position so the ghost tiles stay aligned; it does not recompute. It lets go
+when the rack has been short for three frames (tiles were placed) and is full again for three
+frames, or when it is full again with different letters. A shuffle or a one-frame flicker does
+not release it. Clicking the held card again, Rescan or Pause also releases it.
 
 ## Per tick
 
@@ -29,7 +58,8 @@ older position is never shown.
 5. **Decision.**
    - Tentative tiles (a learned tentative color, or an unknown tile color while the rack has
      shrunk) show "Waiting for board".
-   - Anything uncertain goes to Check tiles.
+   - Anything uncertain is worked around as described above; only what cannot be goes to
+     Check tiles.
    - Otherwise the position is confirmed.
 6. **Identify.** The position ID is a hash of the board letters and blank flags, the rack
    multiset, the profile fingerprint and the word-list version. Complete results are cached by

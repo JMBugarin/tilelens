@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import contextlib
+import os
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -20,8 +22,8 @@ from tilelens.ui.glass_panel import GlassPanel
 from tilelens.ui.overlay import OverlayWindow
 from tilelens.ui.preview import CellMapper
 from tilelens.ui.settings import Settings
-from tilelens.vision.autoread import ViewReader
-from tilelens.vision.recognizer import Calibration, Recognizer
+from tilelens.vision.autoread import NeedsLetters, ViewReader, calibrate_unaided
+from tilelens.vision.recognizer import Calibration, CalibrationError, Recognizer
 
 
 class SuppressingSource:
@@ -72,7 +74,13 @@ class LiveSession(QObject):
         self.panel.card_clicked.connect(self.select)
         self.panel.pause_clicked.connect(self.toggle_pause)
         self.panel.rescan_clicked.connect(self.rescan)
+        self.panel.release_clicked.connect(self.release_hold)
+        self.panel.chip_clicked.connect(self.confirm_tile)
         self.preview_hidden = False
+        self._grid_key = None
+        self._saved_at = 0.0
+        self.needs_letters = None
+        self._saved_mark = None
         self.selected = 0
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
@@ -138,6 +146,49 @@ class LiveSession(QObject):
             self.controller.set_recognizer(self.recognizer)
         else:
             self.start()
+
+    def auto_calibrate(self) -> bool:
+        """Learn the game's look from the screen as it is, reading the rack without typing.
+
+        Returns True when tracking can start. When tiles need a human, needs_letters holds
+        the best guess and which tiles are unsure.
+        """
+        self.needs_letters = None
+        if self.profile.appearance is None or self.adapter is None:
+            return False
+        frame = self.find_board_screen()
+        if frame is None:
+            self.note("Nothing captured. Check the Screen Recording permission.")
+            return False
+        previous = self.recognizer.cal if self.recognizer is not None else None
+        try:
+            cal = calibrate_unaided(frame, self.profile, previous)
+        except NeedsLetters as exc:
+            self.needs_letters = exc
+            tiles = ", ".join(str(i + 1) for i in exc.unsure)
+            self.note(f"Confirm rack tile {tiles}: open Calibrate and check the letters")
+            return False
+        except CalibrationError as exc:
+            self.note(str(exc))
+            return False
+        self.set_calibration(cal)
+        self.note("")
+        return True
+
+    def show_setup_panel(self) -> None:
+        self.panel.show_snapshot(None, 0)
+        region = self.region_provider()
+        if region is not None and not self.panel.user_moved:
+            self.panel.move(region.x + region.width - self.panel.width() - 24, region.y + 72)
+        if self.adapter is not None:
+            self.panel.on_shown = self.adapter.show_on_all_spaces
+        self.panel.show()
+        if self.adapter is not None:
+            self.adapter.show_on_all_spaces(int(self.panel.winId()))
+
+    def note(self, text: str) -> None:
+        self.panel.set_note(text)
+        self.message.emit(text)
 
     def set_region(self, region: Region) -> None:
         self.settings.region = region.to_dict()
@@ -232,7 +283,9 @@ class LiveSession(QObject):
             self.lexicon.version,
             hz=self.settings.hz,
             on_update=self._on_update,
+            lexicon=self.lexicon,
         )
+        self.controller.on_misaligned = self._clear_preview
         if self.adapter is not None:
             # stay over the game, on every Space, also after another app is clicked
             for window in (self.overlay, self.panel):
@@ -244,8 +297,13 @@ class LiveSession(QObject):
                 self.overlay.place(region)
             self.panel.show()
             self.adapter.show_on_all_spaces(int(self.panel.winId()))
-            self.adapter.exclude_from_capture(int(self.panel.winId()))
-            if not self.overlay.try_exclude_from_capture(self.adapter):
+            if os.environ.get("TILELENS_SCREENSHOT_MODE"):
+                pass  # windows stay visible to screenshots; TileLens never reads its own windows
+            else:
+                self.adapter.exclude_from_capture(int(self.panel.winId()))
+            if not os.environ.get("TILELENS_SCREENSHOT_MODE") and (
+                not self.overlay.try_exclude_from_capture(self.adapter)
+            ):
                 self.message.emit(
                     "The preview window could not be hidden from screen capture; "
                     "switching to hiding it during each capture."
@@ -293,14 +351,87 @@ class LiveSession(QObject):
         if self.controller is None:
             return
         self.controller.tick()
+        self._check_values()
+        self._save_learning()
         snap = self.controller.snapshot
+        grid = self.controller.last_grid
+        key = None if grid is None else (round(grid.x0), round(grid.y0), round(grid.pitch_x))
+        if key != self._grid_key:
+            # the board moved or was lost: redraw (or clear) the preview at once
+            self._grid_key = key
+            self.refresh_overlay()
         if self.panel.isVisible() and snap.published_at is not None:
             self.panel.set_age(self.controller.clock() - snap.published_at)
         self.timer.start(int(self.controller.interval() * 1000))
 
+    def adopt_values(self, learned: dict[str, int]) -> None:
+        """Use tile values read from the game itself: save them beside the profile and
+        restart the search so every score follows them."""
+        from tilelens.rules.profile import learned_values, save_learned_values
+
+        path = self.profile.source
+        if path is None or self.controller is None:
+            return
+        merged = learned_values(path)
+        merged.update(learned)
+        save_learned_values(path, merged)
+        self.profile.letter_values.update(learned)
+        reader = self.recognizer
+        if hasattr(reader, "known_values"):
+            reader.known_values.update(learned)
+        if self.solver is not None:
+            self.solver.close()
+        self.solver = None
+        if self.use_process and self.profile.source is not None:
+            self.solver = ProcessSolver(self.profile.source, self.settings.words)
+        else:
+            from tilelens.solver.movegen import MoveGenerator
+
+            self.solver = InlineSolver(MoveGenerator(self.profile, self.lexicon, use_cache=True))
+        ctrl = self.controller
+        ctrl.solver = self.solver
+        ctrl.cache.clear()
+        ctrl.hold = None
+        ctrl.rescan()
+        text = ", ".join(f"{k}={v}" for k, v in sorted(learned.items()))
+        self.message.emit(f"Learned tile values from the game: {text}")
+
+    def _save_learning(self) -> None:
+        """Keep what was learned from play (letter shapes, tile colors) across restarts."""
+        now = time.monotonic()
+        if now - self._saved_at < 5.0:
+            return
+        self._saved_at = now
+        cal = getattr(self.recognizer, "cal", None)
+        if cal is None:
+            return
+        mark = (
+            sum(len(v) for v in cal.templates.values()),
+            sum(len(v) for v in cal.rack_templates.values()),
+            len(cal.tile_backgrounds),
+            sum(len(v) for v in cal.empty_glyphs.values()),
+        )
+        if mark != self._saved_mark:
+            if self._saved_mark is not None:
+                with contextlib.suppress(OSError):
+                    cal.save(self.calibration_path())
+            self._saved_mark = mark
+
+    def _check_values(self) -> None:
+        reader = self.recognizer
+        values = getattr(reader, "values", None)
+        if values is None:
+            return
+        known = getattr(reader, "known_values", {})
+        learned = {k: v for k, v in values.trusted().items() if known.get(k) != v}
+        if learned:
+            self.adopt_values(learned)
+
     def _on_update(self, snap: Snapshot) -> None:
-        if snap.result is None or snap.status != Status.READY:
+        if (snap.result is None or snap.status != Status.READY) and snap.held is None:
             self.selected = 0
+        if snap.held is not None:
+            self.selected = snap.held
         self.refresh_overlay(snap)
         self.updated.emit(snap)
 
@@ -362,15 +493,37 @@ class LiveSession(QObject):
         self.preview_hidden = hidden
         self.refresh_overlay()
 
-    def select(self, index: int) -> None:
-        self.selected = index
+    def select(self, index: int, hold: bool = True) -> None:
+        """Clicking a card shows that play on the board and holds it still while the player
+        places the tiles; clicking the held card again lets go."""
+        ctrl = self.controller
+        if ctrl is not None:
+            if ctrl.hold is not None and ctrl.hold.index == index and self.selected == index:
+                ctrl.release_hold()
+                self.refresh_overlay()
+                self.selection_changed.emit(index)
+                return
+            self.selected = index
+            if hold or ctrl.hold is not None:
+                ctrl.hold_move(index)
+        else:
+            self.selected = index
         self.refresh_overlay()
         self.selection_changed.emit(index)
+
+    def release_hold(self) -> None:
+        if self.controller is not None:
+            self.controller.release_hold()
+        self.refresh_overlay()
+
+    def confirm_tile(self, kind: str, where, letter: str) -> None:
+        if self.controller is not None:
+            self.controller.confirm_tile(kind, where, letter)
 
     def next_card(self) -> None:
         snap = self.snapshot
         if snap and snap.result and snap.result.moves:
-            self.select((self.selected + 1) % len(snap.result.moves))
+            self.select((self.selected + 1) % len(snap.result.moves), hold=False)
 
     @property
     def snapshot(self) -> Snapshot | None:
@@ -389,6 +542,12 @@ class LiveSession(QObject):
         if ctrl is None or region is None or ctrl.last_grid is None or not ctrl.last_frame_size:
             return None
         return CellMapper.for_overlay(ctrl.last_grid, ctrl.last_frame_size, region)
+
+    def board_framed(self) -> bool:
+        """The whole board is inside the game's canvas; any unseen squares are under its panels."""
+        reading = self.controller.last_reading if self.controller is not None else None
+        view = getattr(reading, "view", None)
+        return view is not None and bool(view.visible.all())
 
     def overlay_scene(self) -> OverlayScene:
         """Board frame, rack outline and ghost tiles for the newest reading, in overlay points."""
@@ -427,7 +586,13 @@ class LiveSession(QObject):
             rack=rack,
             rack_read=(known, len(reading.rack)),
             value_of=self.profile.tile_value,
+            framed=self.board_framed(),
         )
+
+    def _clear_preview(self) -> None:
+        self._grid_key = None
+        self.overlay.clear()
+        self.overlay.hide()
 
     def refresh_overlay(self, snap: Snapshot | None = None) -> None:
         self.refresh_panel()
@@ -457,7 +622,7 @@ class LiveSession(QObject):
         age = None
         if snap is not None and snap.published_at is not None and snap.status == Status.READY:
             age = self.controller.clock() - snap.published_at
-        panel.show_snapshot(snap, self.selected, age)
+        panel.show_snapshot(snap, self.selected, age, self.board_framed())
         if not panel.user_moved:
             region = self.region_provider()
             if region is not None:

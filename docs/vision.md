@@ -40,7 +40,23 @@ uv run tilelens read --profile my.toml --calibration my-calibration.json --image
 ## Automatic calibration
 
 When the profile has an `[appearance]` section, the board does not need to be centered, whole
-or uncovered, and no rectangle is drawn. You only type the rack.
+or uncovered, and no rectangle is drawn. Nothing is typed either: the rack is read from
+stock-font letter shapes (below), and you are only asked about tiles that read unclearly.
+
+- **Letters never seen yet.** `src/tilelens/vision/priors.npz` holds every letter and digit
+  drawn in eight common bold fonts (regenerate with `tools/make_priors.py`; only shape vectors
+  are stored). A glyph that no learned template explains is matched against them, and a letter
+  with no learned template is named only if its best stock shape scores at least 0.85 and
+  leads the next letter by 0.07. A learned shape that a stock shape agrees with is trusted
+  at a lower score than one it contradicts. Every confirmed tile then becomes a learned
+  template, saved with the calibration, so the stock shapes matter less each game.
+- **Point values.** The digits printed on rack tiles are read with the digit shapes and
+  voted per letter; a value seen three times with 80% agreement replaces the profile's value
+  (kept in `<profile>.learned.json`, never in the profile itself). Board tiles are not used:
+  they print the points the tile scored, with premiums applied.
+- **Squares only inside the game's canvas.** Squares must lie inside the area where board
+  colors are common, so the sidebar, the letterbox bars and video tiles that surround an
+  activity are never read as tiles.
 
 - **Finding the board.** Pixels are classified against the square colors. The cell pitch is
   the period whose grid lines (light lines between squares, or edges when there are none) give
