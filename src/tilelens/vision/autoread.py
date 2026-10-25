@@ -7,6 +7,7 @@ treats them as walls, so suggestions never depend on squares that cannot be seen
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
 import cv2
 import numpy as np
@@ -121,11 +122,12 @@ def find_rack(
     radius: float,
     view: BoardView | None = None,
     expected: np.ndarray | None = None,
+    band: tuple[int, int, int, int] | None = None,
 ) -> list[Blob]:
     """The row of rack tiles: same-sized tile-colored squares, side by side, in the rack zone."""
     H, W = img.shape[:2]
     x0, x1, y0, y1 = rack_zone(profile)
-    band = (round(x0 * W), round(y0 * H), round(x1 * W), round(y1 * H))
+    band = band or (round(x0 * W), round(y0 * H), round(x1 * W), round(y1 * H))
     blobs = find_tile_blobs(img, band, tile_lab, radius, (0.01 * H, 0.14 * H))
     blobs = [b for b in blobs if not _on_board_square(b, view, expected, tile_lab)]
     if not blobs:
@@ -362,6 +364,11 @@ class ViewReader:
             else calibration.rack_proto.mean[:3]
         )
         self.locates = 0
+        self._cache: dict[int, tuple] = {}
+        self._rack_band: tuple[int, int, int, int] | None = None
+        self._rack_count = 0
+        self._rack_locates = -1
+        self._cache_rev: tuple | None = None
         self.values = ValueVotes()
         self.known_values: dict[str, int] = dict(profile.letter_values)
         # what the player said a square or rack tile shows, kept with the glyph it was said of
@@ -463,17 +470,32 @@ class ViewReader:
         crops: list = [None] * (rows * cols)
         cells: list[list[CellRead]] = []
         self._new_colors: list[tuple[int, int, np.ndarray]] = []
+        rev = self._revision()
+        if rev != self._cache_rev:
+            self._cache, self._cache_rev = {}, rev
+        fresh: dict[int, tuple] = {}
         for r in range(rows):
             row = []
             for c in range(cols):
                 if not view.visible[r, c] or covered[r, c]:
                     row.append(CellRead(state=UNSEEN))
                     continue
-                feat, crop_ = cell_sample(board_img, board_grid, r, c)
+                key = r * cols + c
+                raw = crop(board_img, board_grid.cell_rect(r, c)).copy()
+                hit = self._cache.get(key)
+                if hit is not None and hit[0].shape == raw.shape and np.array_equal(hit[0], raw):
+                    # the square shows exactly what it showed when it was last read
+                    _, feat, crop_, cell = hit
+                    cell = replace(cell)
+                else:
+                    feat, crop_ = cell_sample(board_img, board_grid, r, c)
+                    cell = self._read_cell(r, c, feat, crop_)
                 feats[r, c] = feat
-                crops[r * cols + c] = crop_
-                row.append(self._read_cell(r, c, feat, crop_))
+                crops[key] = crop_
+                fresh[key] = (raw, feat, crop_, replace(cell))
+                row.append(cell)
             cells.append(row)
+        self._cache = fresh
         if self._learn_new_colors():
             # read again the squares whose tile color was not known
             for r in range(rows):
@@ -487,6 +509,19 @@ class ViewReader:
         reading.rack_glyphs = rack_glyphs
         self._vote_values(img, reading, grid)
         return reading
+
+    def _revision(self) -> tuple:
+        """Changes whenever what was learned could change how a square reads."""
+        cal = self.cal
+        return (
+            sum(len(v) for v in cal.templates.values()),
+            sum(len(v) for v in cal.rack_templates.values()),
+            len(cal.tile_backgrounds),
+            sum(len(v) for v in cal.empty_glyphs.values()),
+            sum(len(v) for v in self.board_fixes.values()),
+            cal.blank_value_ink is None,
+            cal.label_ink is None,
+        )
 
     def _vote_values(self, img: np.ndarray, reading: Reading, grid: Grid) -> None:
         """Read the values printed on rack tiles; board tiles show premium-adjusted numbers."""
@@ -561,11 +596,31 @@ class ViewReader:
             return CellRead(letter, False, state, True, "letter is unclear", s1, cands)
         return CellRead() if ring_ok else CellRead(state=UNSEEN)
 
+    def _find_rack(self, img: np.ndarray, view: BoardView | None, radius: float) -> list[Blob]:
+        """Look near where the rack was last seen first; search the whole zone when it moved."""
+        args = (img, self.profile, self.rack_lab, radius, view, self.expected)
+        if self._rack_band is not None and self._rack_locates == self.locates:
+            blobs = find_rack(*args, band=self._rack_band)
+            if len(blobs) == self._rack_count:
+                return blobs
+        blobs = find_rack(*args)
+        if blobs:
+            side = max(b.rect[2] for b in blobs)
+            H, W = img.shape[:2]
+            self._rack_band = (
+                max(0, min(b.rect[0] for b in blobs) - side),
+                max(0, min(b.rect[1] for b in blobs) - side // 2),
+                min(W, max(b.rect[0] + b.rect[2] for b in blobs) + side),
+                min(H, max(b.rect[1] + b.rect[3] for b in blobs) + side // 2),
+            )
+            self._rack_count, self._rack_locates = len(blobs), self.locates
+        return blobs
+
     def _read_rack(self, img: np.ndarray, view: BoardView | None = None) -> list[RackRead]:
         radius = max(18.0, self.cal.rack_proto.radius * 3)
         out = []
         self.last_rack_glyphs = []
-        for b in find_rack(img, self.profile, self.rack_lab, radius, view, self.expected):
+        for b in self._find_rack(img, view, radius):
             glyph = extract_glyph(b.crop, b.ring)
             self.last_rack_glyphs.append(None if glyph is None else glyph.vec)
             if glyph is None or glyph.ink_fraction < 0.01:
