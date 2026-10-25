@@ -68,12 +68,55 @@ class Glyph:
     ink_fraction: float
     value_ink: np.ndarray | None = None
     touches_edge: bool = False
+    value_mask: np.ndarray | None = None
 
 
 def _otsu(values: np.ndarray) -> float:
     v = np.clip(values * 2.0, 0, 255).astype(np.uint8)
     t, _ = cv2.threshold(v, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return float(t) / 2.0
+
+
+def mask_to_vec(mask: np.ndarray) -> np.ndarray | None:
+    """Normalise a letter mask (any size) to the unit glyph vector used for matching."""
+    ys, xs = np.nonzero(mask)
+    if not len(ys):
+        return None
+    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    g = mask[y0:y1, x0:x1].astype(np.float32)
+    h, w = g.shape
+    side = max(h, w)
+    sq = np.zeros((side, side), np.float32)
+    sq[(side - h) // 2 : (side - h) // 2 + h, (side - w) // 2 : (side - w) // 2 + w] = g
+    small = cv2.resize(sq, (GLYPH, GLYPH), interpolation=cv2.INTER_AREA)
+    small = cv2.GaussianBlur(small, (0, 0), 1.3).ravel()
+    small = small - small.mean()
+    norm = float(np.linalg.norm(small))
+    if norm < 1e-6:
+        return None
+    return (small / norm).astype(np.float32)
+
+
+def _merged_value_mark(labels, main, value_pixels, size) -> np.ndarray | None:
+    """A point value that touches its letter (the "1" of a "10" above a Z).
+
+    Digits of one number share a band of rows. Within that band the letter's own pixels join
+    its body, which reaches left of the corner; a leading digit is a small piece of the band
+    that stays on its own beside the digits already found.
+    """
+    if not value_pixels.any():
+        return None
+    ys, xs = np.nonzero(value_pixels)
+    y0, y1, x0 = ys.min(), ys.max(), xs.min()
+    slab = np.zeros(labels.shape, np.uint8)
+    slab[y0 : y1 + 1] = labels[y0 : y1 + 1] == main
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(slab, connectivity=8)
+    out = None
+    for i in range(1, n):
+        x, y, w, h, area = stats[i]
+        if x >= 0.5 * size and x + w <= x0 and w <= 0.3 * size and h >= 0.6 * (y1 - y0 + 1):
+            out = (lab == i) if out is None else out | (lab == i)
+    return out
 
 
 def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | None:
@@ -108,8 +151,17 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
         cx, cy = cents[comp]
         return abs(cx - size / 2) > 0.2 * size and abs(cy - size / 2) > 0.2 * size
 
+    def small_mark(comp):
+        # a point value is a small digit; a thin letter (L, I) can be smaller than its own digit
+        return (
+            stats[comp, cv2.CC_STAT_HEIGHT] < 0.34 * size
+            and stats[comp, cv2.CC_STAT_WIDTH] < 0.34 * size
+        )
+
     def in_value_corner(comp):
         cx, cy = cents[comp]
+        if cx > 0.5 * size and cy < 0.34 * size and small_mark(comp):
+            return True  # the first digit of a two-digit value sits nearer the middle
         return cx > 0.6 * size and (cy > 0.58 * size or cy < 0.42 * size)
 
     comps = [i for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] >= min_area]
@@ -137,7 +189,7 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
         if comp == main:
             continue
         area = stats[comp, cv2.CC_STAT_AREA]
-        if in_value_corner(comp) and area < 0.45 * main_area:
+        if in_value_corner(comp) and (area < 0.45 * main_area or small_mark(comp)):
             value = True
             value_pixels |= labels == comp
         elif in_any_corner(comp) and area < 0.45 * main_area:
@@ -151,6 +203,10 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
         ):
             keep[comp] = True
     letter = keep[labels]
+    carved = _merged_value_mark(labels, main, value_pixels, size)
+    if carved is not None:
+        letter = letter & ~carved
+        value_pixels |= carved
     near_letter = cv2.dilate(letter.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
     z0, z1 = round(size * 0.6), round(size * 0.92)
     for y_lo, y_hi in ((round(size * 0.58), z1), (round(size * 0.08), round(size * 0.42))):
@@ -165,18 +221,8 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
     mx0, my0, mw, mh = stats[main, :4]
     lim = margin + 1
     touches = mx0 <= lim or my0 <= lim or mx0 + mw >= size - lim or my0 + mh >= size - lim
-    ys, xs = np.nonzero(letter)
-    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
-    g = letter[y0:y1, x0:x1].astype(np.float32)
-    h, w = g.shape
-    side = max(h, w)
-    sq = np.zeros((side, side), np.float32)
-    sq[(side - h) // 2 : (side - h) // 2 + h, (side - w) // 2 : (side - w) // 2 + w] = g
-    small = cv2.resize(sq, (GLYPH, GLYPH), interpolation=cv2.INTER_AREA)
-    small = cv2.GaussianBlur(small, (0, 0), 1.3).ravel()
-    small = small - small.mean()
-    norm = float(np.linalg.norm(small))
-    if norm < 1e-6:
+    vec = mask_to_vec(letter)
+    if vec is None:
         return None
     strongest = dist[letter]
     cut = np.percentile(strongest, 70)
@@ -187,12 +233,13 @@ def extract_glyph(crop_bgr: np.ndarray, background_lab: np.ndarray) -> Glyph | N
         cut_v = np.percentile(strongest_v, 60)
         value_ink = np.median(lab[value_pixels & (raw_dist >= cut_v)], axis=0).astype(np.float32)
     return Glyph(
-        (small / norm).astype(np.float32),
+        vec,
         ink.astype(np.float32),
         value,
         float(letter.mean()),
         value_ink,
         bool(touches),
+        value_pixels if value_pixels.sum() >= 3 else None,
     )
 
 

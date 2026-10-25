@@ -236,6 +236,23 @@ def _register(lattice, layout, plain, n_classes):
     return int(by) - pad_r, int(bx) - pad_c, match_rate, margin
 
 
+def _canvas(mask: np.ndarray, scale: float, W: int, H: int) -> tuple[float, float, float, float]:
+    """Bounding box (full-frame pixels) of the area where board colors are common."""
+    colfrac, rowfrac = mask.mean(axis=0), mask.mean(axis=1)
+    # relative to the strongest line, so a beige video tile below the canvas is left out
+    cols = colfrac > max(0.05, 0.35 * colfrac.max())
+    rows = rowfrac > max(0.05, 0.35 * rowfrac.max())
+    if not cols.any() or not rows.any():
+        return 0.0, 0.0, float(W), float(H)
+    xs, ys = np.nonzero(cols)[0], np.nonzero(rows)[0]
+    return (
+        float(xs.min()) / scale,
+        float(ys.min()) / scale,
+        float(xs.max() + 1) / scale,
+        float(ys.max() + 1) / scale,
+    )
+
+
 def classify_pixels(lab: np.ndarray, palette_lab: np.ndarray) -> np.ndarray:
     d = np.linalg.norm(lab[:, :, None, :] - palette_lab[None, None, :, :], axis=3)
     cls = np.argmin(d, axis=2).astype(np.int32)
@@ -243,7 +260,7 @@ def classify_pixels(lab: np.ndarray, palette_lab: np.ndarray) -> np.ndarray:
     return cls
 
 
-def locate_board(frame: np.ndarray, profile: Profile, work_width: int = 1800) -> BoardView:
+def locate_board(frame: np.ndarray, profile: Profile, work_width: int = 1200) -> BoardView:
     keys, palette_lab = _palette(profile)
     H, W = frame.shape[:2]
     s = min(1.0, work_width / W)
@@ -304,8 +321,13 @@ def locate_board(frame: np.ndarray, profile: Profile, work_width: int = 1800) ->
     )
     visible = np.zeros((profile.height, profile.width), bool)
     tol = 0.02 * grid.pitch_x
+    # squares must lie inside the game's own canvas: Discord's sidebar, the letterbox bars and
+    # video tiles around it show nothing of the board but can look like tiles
+    cx0, cy0, cx1, cy1 = _canvas(mask, s, W, H)
     for r in range(profile.height):
         for c in range(profile.width):
             x, y, w, h = grid.cell_rect(r, c)
-            visible[r, c] = x >= -tol and y >= -tol and x + w <= W + tol and y + h <= H + tol
+            visible[r, c] = (
+                x >= cx0 - tol and y >= cy0 - tol and x + w <= cx1 + tol and y + h <= cy1 + tol
+            )
     return BoardView(grid, visible, match_rate, margin, used)

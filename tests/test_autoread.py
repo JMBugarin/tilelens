@@ -105,3 +105,19 @@ def test_reading_partial_views_never_guesses(profile, calibration, seed):
     for t, got in zip([t for t in labels["rack"] if t], reading.rack, strict=False):
         if not got.uncertain:
             assert got.blank == t["blank"] and (t["blank"] or got.letter == t["letter"])
+
+
+@pytest.mark.parametrize("seed", range(1100, 1112))
+def test_unaided_calibration_is_right_or_asks(profile, seed):
+    from tilelens.vision.autoread import NeedsLetters, calibrate_unaided
+
+    scene = random_scene(seed, theme=THEME, cell=40, tentative=False, min_turn=8)
+    img, labels = render_view(scene, ViewSpec())
+    truth = rack_text(labels)
+    try:
+        cal = calibrate_unaided(img, profile)
+    except NeedsLetters as exc:
+        assert len(exc.guess) == len(truth) and exc.unsure
+        return
+    got = ViewReader(cal, profile).read(img)
+    assert "".join("?" if t.blank else t.letter for t in got.rack) == truth

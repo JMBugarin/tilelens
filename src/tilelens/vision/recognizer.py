@@ -39,6 +39,11 @@ SCALE_TOLERANCE = 0.03
 SCALE_CHANGED = "board size changed since calibration; recalibrate"
 
 
+PRIOR_MIN = 0.85  # a stock-font shape must match this well to name a letter never seen
+PRIOR_MARGIN = 0.07
+PRIOR_SKIP = 0.93  # a learned template this close already explains the glyph
+PRIOR_SCORE = 0.96  # stands in for the score of a prior-named letter; see Recognizer.match
+
 LETTER_MIN_STRICT = 0.95
 CROSS_MIN = 0.92
 CROSS_MARGIN = 0.04
@@ -252,6 +257,7 @@ class RackRead:
     reason: str = ""
     rect: tuple[int, int, int, int] = (0, 0, 0, 0)
     letter_score: float = 0.0
+    candidates: tuple[str, ...] = ()
 
 
 @dataclass
@@ -335,7 +341,34 @@ class Reading:
         return (cells, rack)
 
 
+_PRIORS: tuple[list[str], np.ndarray] | None = None
+
+
+def font_priors() -> tuple[list[str], np.ndarray]:
+    """Letter shapes in stock bold fonts, (letters, fonts x letters x glyph) from priors.npz."""
+    global _PRIORS
+    if _PRIORS is None:
+        path = Path(__file__).with_name("priors.npz")
+        try:
+            data = np.load(path)
+            _PRIORS = ([str(x) for x in data["letters"]], data["vecs"].astype(np.float32))
+        except (OSError, ValueError, KeyError):
+            _PRIORS = ([], np.zeros((0, 0, GLYPH * GLYPH), np.float32))
+    return _PRIORS
+
+
+def font_prior_scores(vec: np.ndarray) -> dict[str, float]:
+    """Best cosine score of a glyph vector against each letter over the stock fonts."""
+    letters, vecs = font_priors()
+    if not letters:
+        return {}
+    best = (vecs @ vec).max(axis=0)
+    return {ch: float(s) for ch, s in zip(letters, best, strict=True)}
+
+
 class Recognizer:
+    use_priors = False
+
     def __init__(self, calibration: Calibration, profile: Profile):
         self.cal = calibration
         self.profile = profile
@@ -392,7 +425,56 @@ class Recognizer:
         ranked = sorted(merged.items(), key=lambda kv: -kv[1][0])
         letter, (s1, same_source) = ranked[0]
         s2 = ranked[1][1][0] if len(ranked) > 1 else -1.0
-        return letter, s1, s2, tuple(k for k, _ in ranked[:3]), same_source
+        if (
+            self.use_priors
+            and 0.85 <= s1 < LETTER_MIN_STRICT
+            and self._prior_agrees(glyph.vec, letter)
+        ):
+            s1 = LETTER_MIN_STRICT  # a learned shape and a stock-font shape name the same letter
+        named = self._prior_letter(glyph.vec, s1)
+        if named is not None:
+            # the letter has never been seen in this game's font; a stock-font shape named it
+            # clearly. Report it as a confident same-source match so the usual rules apply.
+            others = [k for k, _ in ranked if k != named][:2]
+            return named, PRIOR_SCORE, 0.5, (named, *others), True
+        return letter, s1, s2, self._candidates(glyph.vec, ranked), same_source
+
+    def _candidates(self, vec: np.ndarray, ranked) -> tuple[str, ...]:
+        """Best letters first: learned matches, then stock-font matches for unseen letters."""
+        out = [k for k, _ in ranked[:3]]
+        if self.use_priors:
+            scores = self.prior_scores(vec)
+            alpha = self.profile.alphabet
+            for ch, _ in sorted(scores.items(), key=lambda kv: -kv[1])[:3]:
+                if ch in alpha and ch not in out:
+                    out.append(ch)
+        return tuple(out)
+
+    def _prior_agrees(self, vec: np.ndarray, letter: str) -> bool:
+        scores = {k: v for k, v in self.prior_scores(vec).items() if k in self.profile.alphabet}
+        if len(scores) < 2:
+            return False
+        ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+        return (
+            ranked[0][0] == letter and ranked[0][1] >= 0.8 and ranked[0][1] - ranked[1][1] >= 0.04
+        )
+
+    def prior_scores(self, vec: np.ndarray) -> dict[str, float]:
+        return font_prior_scores(vec)
+
+    def _prior_letter(self, vec: np.ndarray, real_best: float) -> str | None:
+        """The letter a stock-font shape names, only if it is one with no learned template."""
+        if not self.use_priors or real_best >= PRIOR_SKIP or not self.missing_letters:
+            return None
+        scores = self.prior_scores(vec)
+        allowed = {ch: s for ch, s in scores.items() if ch in self.profile.alphabet}
+        if len(allowed) < 2:
+            return None
+        ranked = sorted(allowed.items(), key=lambda kv: -kv[1])
+        (top, s1), (_, s2) = ranked[0], ranked[1]
+        if top in self.missing_letters and s1 >= PRIOR_MIN and s1 - s2 >= PRIOR_MARGIN:
+            return top
+        return None
 
     def accept(self, home: str, letter, s1: float, s2: float, same_source: bool) -> bool:
         if letter is None:

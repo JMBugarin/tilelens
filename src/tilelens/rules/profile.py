@@ -138,7 +138,33 @@ def load_profile(path: str | Path) -> Profile:
         raise ProfileError(["file not found"], path) from None
     except tomllib.TOMLDecodeError as exc:
         raise ProfileError([f"invalid TOML: {exc}"], path) from None
-    return parse_profile(data, source=path)
+    profile = parse_profile(data, source=path)
+    learned = learned_values(path)
+    if learned:
+        profile.letter_values.update(
+            {k: v for k, v in learned.items() if k in profile.letter_values}
+        )
+    return profile
+
+
+def learned_path(path: Path) -> Path:
+    return path.with_name(path.stem + ".learned.json")
+
+
+def learned_values(path: Path) -> dict[str, int]:
+    """Tile values read from the game's own tiles, kept beside the profile that they amend."""
+    try:
+        data = json.loads(learned_path(path).read_text(encoding="utf-8"))
+        return {str(k): int(v) for k, v in data.get("values", {}).items()}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def save_learned_values(path: Path, values: dict[str, int]) -> None:
+    target = learned_path(path)
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"values": dict(sorted(values.items()))}, indent=1))
+    tmp.replace(target)
 
 
 def parse_profile(data: dict[str, Any], source: Path | None = None) -> Profile:
