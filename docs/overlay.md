@@ -14,7 +14,10 @@
   press Resume tracking, to let go early.
 - **Unsure tile:** when a tile cannot be read with confidence the cards stay live and the panel
   names the tile with its best candidates as letter buttons. One tap teaches TileLens that
-  tile.
+  tile. The tile is also outlined in yellow on the board or the rack, with a label such as
+  "M18: Y?" or "Tile 4: Y?", so there is no need to work out which square a name refers to.
+  The one the letter buttons answer has the heavy outline; any others a lighter one. Yellow is
+  used for nothing else: suggestions are cyan and dashed.
 - **Buttons:** Select region, Calibrate, Pause/Resume, Rescan, Hide preview, Check tiles
   (opens the correction grid), Profile and Word list (both reload live), and the overlay mode.
 - **Board preview:** a copy of the suggestion inside this window. It is the only preview in
@@ -54,6 +57,7 @@ It draws in a glass style:
 - **Ghost tiles** for the selected play only: dashed cyan outlines on dark glass with the
   letter and its point value and a "+N pts" label above. Letters already on
   the board that are part of the word get a cyan ring. A blank's letter is drawn in cyan.
+- **Tiles to confirm.** Solid yellow outlines (see the panel's unsure tile above).
 - **Rack outline.** Green with "Rack confirmed · 7/7" when every rack tile was read, amber with
   how many were read otherwise.
 

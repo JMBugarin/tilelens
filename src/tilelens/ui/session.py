@@ -621,6 +621,7 @@ class LiveSession(QObject):
             rack = QRectF(x0 * sx, y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy)
         known = sum(1 for t in reading.rack if not t.uncertain and (t.letter or t.blank))
         move = None if self.preview_hidden else self.selected_move()
+        unsure = self._unsure_marks(snap, reading, mapper, region, ctrl.last_frame_size)
         return OverlayScene(
             move=move,
             rect_of=mapper.rect,
@@ -630,7 +631,32 @@ class LiveSession(QObject):
             rack_read=(known, len(reading.rack)),
             value_of=self.profile.tile_value,
             framed=self.board_framed(),
+            unsure=unsure,
         )
+
+    def _unsure_marks(self, snap, reading, mapper, region, frame_size):
+        """Yellow marks on the tiles TileLens is asking about, the first one being the question
+        the panel's letter buttons answer."""
+        from tilelens.state.names import square_name
+
+        if snap.held is not None:
+            return []
+        fw, fh = frame_size
+        sx, sy = region.width / fw, region.height / fh
+        marks = []
+        for i, (kind, where, guess, _cands) in enumerate(snap.unsure):
+            if kind == "rack":
+                if where >= len(reading.rack) or reading.rack[where].rect is None:
+                    continue
+                x, y, w, h = reading.rack[where].rect
+                rect = QRectF(x * sx, y * sy, w * sx, h * sy)
+                name = f"Tile {where + 1}"
+            else:
+                rect = mapper.rect(where[0], where[1], 0)
+                name = square_name(*where)
+            label = f"{name}: {guess}?" if i == 0 and guess else (f"{name}?" if i == 0 else "?")
+            marks.append((rect, label, i == 0))
+        return marks
 
     def _log_event(self, text: str) -> None:
         """Append what the tracker decided to a small log, for finding out why it did it."""
