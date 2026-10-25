@@ -248,6 +248,7 @@ class CellRead:
     letter_score: float = 0.0
     candidates: tuple[str, ...] = ()
     value: int | None = None  # the number printed on a played tile
+    star: bool = False  # the purple star that marks an unplayed start square
 
 
 @dataclass
@@ -270,6 +271,8 @@ class Reading:
     elapsed: float
     warnings: list[str] = field(default_factory=list)
     base_values: dict = field(default_factory=dict, repr=False, compare=False)
+    start_open: bool = False  # every visible start square is empty: no word has been played
+    star_seen: bool = False
     features: np.ndarray | None = field(default=None, repr=False)
     crops: list | None = field(default=None, repr=False)
 
