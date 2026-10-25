@@ -26,11 +26,23 @@ Cell = tuple[str, bool] | None
 
 
 class Board:
-    __slots__ = ("_cells", "_hash", "height", "width")
+    __slots__ = ("_cells", "_hash", "_stamps", "height", "width")
 
-    def __init__(self, width: int, height: int, cells: Iterable[Iterable[Cell]] | None = None):
+    def __init__(
+        self,
+        width: int,
+        height: int,
+        cells: Iterable[Iterable[Cell]] | None = None,
+        stamps: dict[tuple[int, int], int] | None = None,
+    ):
+        """stamps: the value shown on a played tile when it differs from the letter's own.
+
+        Some games stamp a tile with the points it earned (letter and word premiums), and
+        count that stamped value whenever the tile is used again.
+        """
         self.width = width
         self.height = height
+        self._stamps = tuple(sorted((stamps or {}).items()))
         if cells is None:
             self._cells = tuple((None,) * width for _ in range(height))
         else:
@@ -64,6 +76,22 @@ class Board:
                     raise ValueError(f"unexpected board character {ch!r}")
             cells.append(row)
         return cls(width, height, cells)
+
+    @property
+    def stamps(self) -> dict[tuple[int, int], int]:
+        return dict(self._stamps)
+
+    def stamp(self, row: int, col: int) -> int | None:
+        for (r, c), v in self._stamps:
+            if r == row and c == col:
+                return v
+        return None
+
+    def stamp_list(self) -> list[tuple[int, int, int]]:
+        return [(r, c, v) for (r, c), v in self._stamps]
+
+    def with_stamps(self, stamps: dict[tuple[int, int], int]) -> Board:
+        return Board(self.width, self.height, self._cells, stamps)
 
     def to_rows(self) -> list[str]:
         out = []
@@ -107,21 +135,30 @@ class Board:
         cells = [list(row) for row in self._cells]
         for t in tiles:
             cells[t.row][t.col] = (t.letter, t.blank)
-        return Board(self.width, self.height, cells)
+        return Board(self.width, self.height, cells, self.stamps)
 
     def transpose(self) -> Board:
-        return Board(self.height, self.width, zip(*self._cells, strict=True))
+        return Board(
+            self.height,
+            self.width,
+            zip(*self._cells, strict=True),
+            {(c, r): v for (r, c), v in self._stamps},
+        )
 
     @property
     def cells(self) -> tuple[tuple[Cell, ...], ...]:
         return self._cells
 
     def __eq__(self, other) -> bool:
-        return isinstance(other, Board) and self._cells == other._cells
+        return (
+            isinstance(other, Board)
+            and self._cells == other._cells
+            and self._stamps == other._stamps
+        )
 
     def __hash__(self) -> int:
         if self._hash is None:
-            self._hash = hash(self._cells)
+            self._hash = hash((self._cells, self._stamps))
         return self._hash
 
     def __repr__(self) -> str:

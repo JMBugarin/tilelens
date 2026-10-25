@@ -71,6 +71,10 @@ class BoardMemory:
                     ]
                     for r in range(seen.height)
                 ],
+                {
+                    **{k: v for k, v in mem.stamps.items() if seen.is_unknown(*k)},
+                    **seen.stamps,
+                },
             )
         else:
             self.board = seen

@@ -247,6 +247,7 @@ class CellRead:
     reason: str = ""
     letter_score: float = 0.0
     candidates: tuple[str, ...] = ()
+    value: int | None = None  # the number printed on a played tile
 
 
 @dataclass
@@ -268,6 +269,7 @@ class Reading:
     visible: bool
     elapsed: float
     warnings: list[str] = field(default_factory=list)
+    base_values: dict = field(default_factory=dict, repr=False, compare=False)
     features: np.ndarray | None = field(default=None, repr=False)
     crops: list | None = field(default=None, repr=False)
 
@@ -305,7 +307,17 @@ class Reading:
             ]
             for row in self.cells
         ]
-        return Board(cols, rows, cells)
+        stamps = {
+            (r, c): cell.value
+            for r, row in enumerate(self.cells)
+            for c, cell in enumerate(row)
+            if cell.value
+            and cell.letter
+            and not cell.blank
+            and cell.state in states
+            and cell.value != self.base_values.get(cell.letter)
+        }
+        return Board(cols, rows, cells, stamps)
 
     def tentative_squares(self) -> list[tuple[int, int]]:
         return [

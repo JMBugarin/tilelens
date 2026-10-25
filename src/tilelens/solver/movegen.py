@@ -192,6 +192,16 @@ class MoveGenerator:
                 if x is not None:
                     g[r][c] = x[0]
                     bl[r][c] = x[1]
+        stamps = board.stamps
+        if transposed:
+            stamps = {(c, r): v for (r, c), v in stamps.items()}
+        V = [
+            [
+                0 if bl[r][c] else stamps.get((r, c), values.get(g[r][c], 0)) if g[r][c] else 0
+                for c in range(W)
+            ]
+            for r in range(H)
+        ]
         LM = [[lm_at(r, c) for c in range(W)] for r in range(H)]
         WM = [[wm_at(r, c) for c in range(W)] for r in range(H)]
 
@@ -218,14 +228,14 @@ class MoveGenerator:
                         s = 0
                         while rr >= 0 and g[rr][c] is not None:
                             above.append(g[rr][c])
-                            s += 0 if bl[rr][c] else values.get(g[rr][c], 0)
+                            s += V[rr][c]
                             rr -= 1
                         prefix = "".join(reversed(above))
                         rr = r + 1
                         below = []
                         while rr < H and g[rr][c] is not None:
                             below.append(g[rr][c])
-                            s += 0 if bl[rr][c] else values.get(g[rr][c], 0)
+                            s += V[rr][c]
                             rr += 1
                         suffix = "".join(below)
                         cross_ok[r][c] = {L for L in alphabet if prefix + L + suffix in words}
@@ -242,6 +252,7 @@ class MoveGenerator:
             if not any(anchor[r]):
                 continue
             blr = bl[r]
+            vr = V[r]
             lmr = LM[r]
             wmr = WM[r]
             ccr = cross_ok[r]
@@ -250,7 +261,17 @@ class MoveGenerator:
             placed: dict[int, tuple[str, bool]] = {}
 
             def record(
-                start, end, r=r, row=row, blr=blr, lmr=lmr, wmr=wmr, ccr=ccr, csr=csr, placed=placed
+                start,
+                end,
+                r=r,
+                row=row,
+                vr=vr,
+                blr=blr,
+                lmr=lmr,
+                wmr=wmr,
+                ccr=ccr,
+                csr=csr,
+                placed=placed,
             ):
                 main = 0
                 wm_product = 1
@@ -259,8 +280,7 @@ class MoveGenerator:
                 for col in range(start, end):
                     pl = placed.get(col)
                     if pl is None:
-                        if not blr[col]:
-                            main += values[row[col]]
+                        main += vr[col]
                     else:
                         v = 0 if pl[1] else values[pl[0]]
                         lm = lmr[col]

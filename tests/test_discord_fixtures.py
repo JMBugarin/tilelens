@@ -48,3 +48,15 @@ def test_point_values_are_read_off_the_tiles(name, letters, values):
     img, blobs = tiles(name)
     got = [tile_value(img, b.rect) for b in blobs]
     assert got == values
+
+
+def test_stamped_values_on_played_tiles_are_read():
+    """AROUND was played for triple word, so each tile shows its value times three (the A also
+    sat on a double letter). The game counts those numbers when the tiles are used again."""
+    img = cv2.imread(str(FIXTURES / "board-around.png"))
+    pitch = 62.6
+    got = []
+    for i, base in enumerate([1, 1, 1, 1, 1]):  # A R O U N
+        rect = (round(6 + i * pitch), 6, round(pitch), round(pitch))
+        got.append(tile_value(img, rect, 999, base))
+    assert got == [6, 3, 3, 3, 3]

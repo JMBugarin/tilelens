@@ -38,12 +38,12 @@ class DelayedSolver:
     def busy(self):
         return self.running is not None
 
-    def submit(self, pid, rows, rack):
+    def submit(self, pid, rows, rack, stamps=()):
         self.submitted.append(pid)
         if self.running is not None:
-            self.pending = (pid, rows, rack)
+            self.pending = (pid, rows, rack, stamps)
         else:
-            self.running = [self.delay, (pid, rows, rack)]
+            self.running = [self.delay, (pid, rows, rack, stamps)]
 
     def cancel(self):
         self.pending = None
@@ -54,8 +54,8 @@ class DelayedSolver:
         self.running[0] -= 1
         if self.running[0] > 0:
             return []
-        pid, rows, rack = self.running[1]
-        self.inner.submit(pid, rows, rack)
+        pid, rows, rack, stamps = self.running[1]
+        self.inner.submit(pid, rows, rack, stamps)
         out = self.inner.poll()
         self.running = None
         if self.pending is not None:

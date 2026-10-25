@@ -229,7 +229,7 @@ def run(
         now = time.monotonic()
         report.timeline.append((round(now - t0, 3), snap.status.value, snap.detail))
         if snap.result is not None and snap.status == Status.READY:
-            if snap.pid not in captured["pids"]:
+            if snap.pid not in captured["pids"] and not conservative(snap):
                 report.stale_published += 1
                 tb, tr = window.frame_position
                 diffs = [
@@ -248,6 +248,38 @@ def run(
             last_ready_pid["pid"] = snap.pid
         if snap.status == Status.CHECK and snap.reading is not None:
             QTimer.singleShot(0, lambda s=snap: answer_check(s))
+        elif snap.unsure and snap.held is None:
+            QTimer.singleShot(0, lambda s=snap: answer_unsure(s))
+
+    def conservative(snap) -> bool:
+        """A result made while a tile was unclear: it leaves that tile out (a wall on the
+        board, a missing tile in the rack) and is right about everything else."""
+        if not snap.unsure or snap.board is None:
+            return False
+        tb, tr = window.frame_position
+        board_ok = all(
+            snap.board.is_unknown(r, c) or snap.board.get(r, c) == tb.get(r, c)
+            for r in range(tb.height)
+            for c in range(tb.width)
+        )
+        return board_ok and not (snap.rack - tr)
+
+    def answer_unsure(snap):
+        """Tap the right letter for the first unclear tile, as a player would."""
+        ctrl = session.controller
+        if ctrl is None or ctrl.snapshot is not snap or not snap.unsure:
+            return
+        kind, where, _guess, _cands = snap.unsure[0]
+        if kind == "rack":
+            truth_rack = [x for x in window.game.rack if x is not None]
+            if where >= len(truth_rack):
+                return
+            letter = truth_rack[where]
+        else:
+            cell = window.game.board.get(*where)
+            letter = cell[0] if cell else None
+        if letter and letter != "?" and ctrl.confirm_tile(kind, where, letter):
+            report.checks_corrected += 1
 
     def answer_check(snap):
         ctrl = session.controller

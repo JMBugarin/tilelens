@@ -81,7 +81,7 @@ def test_clicking_a_suggestion_holds_it_until_the_rack_refills():
     assert ctrl.snapshot.result is shown and ctrl.snapshot.held == 0
     assert ctrl.hold.seen_short
     # the rack refills with new letters: tracking resumes on its own
-    rec.current = reading("CAOTS")
+    rec.current = reading("CAOTR")
     tick(12)
     assert ctrl.hold is None and ctrl.snapshot.held is None
     assert ctrl.snapshot.status in (Status.READY, Status.SOLVING, Status.READING)
@@ -148,3 +148,46 @@ def test_unclear_square_with_no_tile_beside_it_is_ignored_silently():
     tick(10)
     snap = ctrl.snapshot
     assert snap.status == Status.READY and not snap.unsure and snap.notice == ""
+
+
+def test_misread_rack_while_holding_does_not_release():
+    rec, ctrl, tick = make("CATSO")
+    tick(8)
+    ctrl.hold_move(0)
+    rec.current = reading("CATSX")  # a hover or a bad frame, rack never seen short
+    tick(12)
+    assert ctrl.hold is not None
+
+
+def test_recalling_every_tile_does_not_release():
+    rec, ctrl, tick = make("CATSO")
+    tick(8)
+    ctrl.hold_move(0)
+    rec.current = reading("CA")
+    tick(6)
+    rec.current = reading("CATSO")  # tiles taken back: same letters
+    tick(12)
+    assert ctrl.hold is not None
+
+
+def test_board_hidden_briefly_keeps_the_alignment():
+    rec, ctrl, tick = make("CATSO")
+    tick(8)
+    ctrl.hold_move(0)
+    tick(2)
+    grid = ctrl.last_grid
+    hidden = reading("CATSO")
+    hidden.visible = False
+    rec.current = hidden
+    tick(10)
+    assert ctrl.last_grid is grid and ctrl.hold is not None
+
+
+def test_an_unclear_rack_tile_is_left_out_of_the_search():
+    rec, ctrl, tick = make("CATSO")
+    rec.current = reading("CATSO", uncertain_rack=(4,))
+    tick(10)
+    snap = ctrl.snapshot
+    assert snap.status == Status.READY
+    assert sum(snap.rack.values()) == 4 and "leave it out" in snap.notice
+    assert all("O" not in [t.letter for t in m.tiles] for m in snap.result.moves)

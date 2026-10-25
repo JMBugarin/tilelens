@@ -39,9 +39,14 @@ When a tile is unclear the loop works in this order before it asks anything:
 
 Clicking a card selects it and holds it (`LiveController.hold_move`). While held, the loop only
 follows the board's position so the ghost tiles stay aligned; it does not recompute. It lets go
-when the rack has been short for three frames (tiles were placed) and is full again for three
-frames, or when it is full again with different letters. A shuffle or a one-frame flicker does
-not release it. Clicking the held card again, Rescan or Pause also releases it.
+only when all of these hold: the rack was seen short for three frames (tiles were placed), it is
+full again, and at least one tile is not in the rack that was held, for three frames in a row.
+Things that do not release it: a shuffle, a flicker or misread of one tile, a hand or dragged
+tile hiding the board (the last alignment is kept for four seconds), taking tiles back, or a
+newly learned tile value. Clicking the held card again, Rescan or Pause also releases it.
+
+Every start and release is written, with its reason, to `events.log` in the data folder
+(`~/Library/Application Support/tilelens/` on macOS), so an unexpected release can be traced.
 
 ## Per tick
 
