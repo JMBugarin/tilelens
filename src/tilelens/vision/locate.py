@@ -30,6 +30,9 @@ class BoardView:
     match_rate: float
     margin: float
     cells_used: int
+    extent: tuple[int, int, int, int] | None = None  # first and last row and column of the board
+    canvas: tuple[float, float, float, float] = (0.0, 0.0, 1e9, 1e9)
+    span: tuple[int, int, int, int] | None = None  # the stretch of squares that was measured
 
     @property
     def visible_count(self) -> int:
@@ -37,7 +40,8 @@ class BoardView:
 
     @property
     def full(self) -> bool:
-        return bool(self.visible.all())
+        r0, c0, r1, c1 = self.extent or (0, 0, *(n - 1 for n in self.visible.shape))
+        return bool(self.visible[r0 : r1 + 1, c0 : c1 + 1].all())
 
 
 def _drop_blocks(lattice: np.ndarray, layout: np.ndarray, plain: int) -> np.ndarray:
@@ -82,7 +86,7 @@ def _aliases(lab: np.ndarray) -> np.ndarray:
 def _layout_classes(profile: Profile, keys: list[str]) -> np.ndarray:
     index = {k: i for i, k in enumerate(keys)}
     legend_char = {}
-    raw_layout = profile.raw.get("board", {}).get("layout", [])
+    raw_layout = profile.layout_chars or profile.raw.get("board", {}).get("layout", [])
     out = np.full((profile.height, profile.width), index["."], np.int32)
     for r, line in enumerate(raw_layout):
         for c, ch in enumerate(line):
@@ -202,7 +206,13 @@ def _fit_lattices(cls, n_classes, px, py, extent):
     return fits
 
 
-def _register(lattice, layout, plain, n_classes):
+def _register(lattice, layout, plain, n_classes, period=None):
+    """Offsets (layout index of lattice cell 0,0) that match the premium squares.
+
+    With a repeating layout the same pattern fits at offsets one period apart. Those are
+    returned together (best first) and the margin is measured against the best offset that is
+    not one of them, so a repeating board is not mistaken for an unclear one.
+    """
     nrows, ncols = lattice.shape
     R, C = layout.shape
     pad_r, pad_c = nrows, ncols
@@ -228,12 +238,47 @@ def _register(lattice, layout, plain, n_classes):
     if premium_total < 4:
         return None
     flat = score.ravel()
-    order = np.argsort(-flat)
-    by, bx = np.unravel_index(int(order[0]), score.shape)
-    second = float(flat[order[1]]) if len(order) > 1 else -np.inf
+    best = int(np.argmax(flat))
+    by, bx = np.unravel_index(best, score.shape)
+    top = float(flat[best])
+    candidates = [(int(by) - pad_r, int(bx) - pad_c)]
+    if period is not None:
+        pr, pc = period
+        ys, xs = np.mgrid[0 : score.shape[0], 0 : score.shape[1]]
+        same = ((ys - by) % pr == 0) & ((xs - bx) % pc == 0)
+        near = same & (score >= top - 3.0)
+        found = np.argwhere(near)
+        candidates = [(int(y) - pad_r, int(x) - pad_c) for y, x in found]
+        candidates.sort(key=lambda o: o != (int(by) - pad_r, int(bx) - pad_c))
+        others = np.where(same, -np.inf, score).ravel()
+    else:
+        others = flat.copy()
+        others[best] = -np.inf
+    second = float(others.max()) if others.size else -np.inf
     match_rate = float(premium_hits[by, bx]) / premium_total
-    margin = (float(flat[order[0]]) - second) / (3.0 * premium_total)
-    return int(by) - pad_r, int(bx) - pad_c, match_rate, margin
+    margin = (top - second) / (3.0 * premium_total)
+    return candidates, match_rate, margin
+
+
+def classify_pixels(lab: np.ndarray, palette_lab: np.ndarray) -> np.ndarray:
+    d = np.linalg.norm(lab[:, :, None, :] - palette_lab[None, None, :, :], axis=3)
+    cls = np.argmin(d, axis=2).astype(np.int32)
+    cls[np.min(d, axis=2) > COLOR_MATCH] = -1
+    return cls
+
+
+@dataclass
+class BoardHint:
+    """What is already known about the board, to settle which copy of a repeating pattern a
+    view shows: where tiles were last seen (layout indices)."""
+
+    tiles: frozenset = frozenset()
+
+
+STRICT_PLAIN = 4.5  # Lab distance within which a square shows its own plain color
+BACKGROUND = 6.0  # Lab distance within which a square shows the board's background
+STRICT_PREMIUM = 18.0  # premium squares carry a label, which shifts their average color
+STAR_MIN, STAR_MAX = 0.03, 0.55
 
 
 def _canvas(mask: np.ndarray, scale: float, W: int, H: int) -> tuple[float, float, float, float]:
@@ -253,14 +298,225 @@ def _canvas(mask: np.ndarray, scale: float, W: int, H: int) -> tuple[float, floa
     )
 
 
-def classify_pixels(lab: np.ndarray, palette_lab: np.ndarray) -> np.ndarray:
-    d = np.linalg.norm(lab[:, :, None, :] - palette_lab[None, None, :, :], axis=3)
-    cls = np.argmin(d, axis=2).astype(np.int32)
-    cls[np.min(d, axis=2) > COLOR_MATCH] = -1
-    return cls
+def _survey(small, lab, palette_lab, plain, ox, oy, pitch, shape):
+    """Per lattice cell: does it show an empty square's own color, and how violet is it."""
+    rows, cols = shape
+    H, W = lab.shape[:2]
+    xs = np.arange(ox, W - pitch, pitch)[:cols]
+    ys = np.arange(oy, H - pitch, pitch)[:rows]
+    inset = 0.15
+    xa = np.round(xs + inset * pitch).astype(int)
+    xb = np.round(xs + (1 - inset) * pitch).astype(int)
+    ya = np.round(ys + inset * pitch).astype(int)
+    yb = np.round(ys + (1 - inset) * pitch).astype(int)
+    XA, YA = np.meshgrid(xa, ya)
+    XB, YB = np.meshgrid(xb, yb)
+    area = np.maximum(1, (XB - XA) * (YB - YA)).astype(np.float32)
+
+    def mean_of(channel):
+        ii = cv2.integral(channel.astype(np.float64))
+        return (ii[YB, XB] - ii[YA, XB] - ii[YB, XA] + ii[YA, XA]) / area
+
+    mean = np.stack([mean_of(lab[:, :, k]) for k in range(3)], axis=-1)
+    d_all = np.linalg.norm(mean[:, :, None, :] - palette_lab[None, None, :, :], axis=3)
+    nearest = d_all.argmin(axis=2)
+    dist = d_all.min(axis=2)
+    limit = np.where(nearest == plain, STRICT_PLAIN, STRICT_PREMIUM)
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    violet = ((hsv[:, :, 0] >= 118) & (hsv[:, :, 0] <= 158) & (hsv[:, :, 1] >= 70)
+              & (hsv[:, :, 2] >= 90))  # fmt: skip
+    frac = mean_of(violet.astype(np.float32))
+    return dist < limit, frac
 
 
-def locate_board(frame: np.ndarray, profile: Profile, work_width: int = 1200) -> BoardView:
+def _dense_run(counts: np.ndarray) -> tuple[int, int]:
+    """The stretch of rows (or columns) that holds the board: where empty squares are common.
+
+    A few stray squares elsewhere (a panel's plain-colored corner) do not extend it. A line
+    with few squares (something covers part of it) belongs to the board, and so does a line
+    with none if a dense one follows it within two lines; a sparse stretch that never gets
+    dense again does not."""
+    top = float(counts.max())
+    peak = int(counts.argmax())
+    sparse = max(2.0, 0.2 * top)
+    dense = 0.5 * top
+
+    def walk(step):
+        edge, i = peak, peak + step
+        while 0 <= i < len(counts):
+            if counts[i] >= sparse:
+                edge = i
+            elif not any(
+                0 <= i + k * step < len(counts) and counts[i + k * step] >= dense for k in (1, 2)
+            ):
+                break
+            i += step
+        return edge
+
+    return walk(-1), walk(1)
+
+
+def _star_cells(strict, frac):
+    """Cells with a little violet that are not part of a large violet panel."""
+    out = []
+    big = frac >= 0.55
+    near_big = cv2.dilate(big.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    for i, j in np.argwhere((frac >= STAR_MIN) & (frac <= STAR_MAX) & ~near_big):
+        out.append((int(i), int(j)))
+    return out
+
+
+def _choose_offset(cands, strict, frac, profile, hint, board_box):
+    """Among offsets that fit equally well because the pattern repeats, the one the board's
+    content points to: tiles seen before, the star on the start square, a tile on it."""
+    rows, cols = strict.shape
+    stars = _star_cells(strict, frac)
+    starts = set(profile.start_squares)
+    known = hint.tiles if hint is not None else frozenset()
+    center = ((profile.height - 1) / 2, (profile.width - 1) / 2)
+    rmin, rmax, cmin, cmax = board_box
+    best = None
+    for r0, c0 in cands:
+        if (
+            r0 + rmin < 0
+            or c0 + cmin < 0
+            or r0 + rmax >= profile.height
+            or c0 + cmax >= profile.width
+        ):
+            continue
+        sc = 0.0
+        for r, c in known:
+            i, j = r - r0, c - c0
+            if 0 <= i < rows and 0 <= j < cols:
+                sc += 1.0 if not strict[i, j] else -2.0
+        if not known:
+            for i, j in stars:
+                sc += 6.0 if (i + r0, j + c0) in starts else -3.0
+            for sr, scol in starts:
+                i, j = sr - r0, scol - c0
+                if 0 <= i < rows and 0 <= j < cols:
+                    sc += 1.0 if not strict[i, j] else -1.0
+        mid = ((r0 + rows / 2) - center[0]) ** 2 + ((c0 + cols / 2) - center[1]) ** 2
+        sc -= 0.001 * mid
+        if best is None or sc > best[0]:
+            best = (sc, (r0, c0))
+    return best[1] if best else cands[0]
+
+
+def _measure(lab, scale, grid, canvas, profile, palette_lab, keys):
+    """The board's extent (first and last row and column) from how squares look on screen.
+
+    A square counts when its average color is its own empty color. The extent is the dense
+    stretch of such squares; a side whose neighbouring line is off screen (or outside the
+    game's canvas) is open, since the board may go on there, and a side whose neighbouring line
+    is visible and not board is the board's edge.
+    """
+    H, W = lab.shape[:2]
+    rows, cols = profile.height, profile.width
+    pitch = grid.pitch_x * scale
+    xs = (grid.x0 + np.arange(cols) * grid.pitch_x) * scale
+    ys = (grid.y0 + np.arange(rows) * grid.pitch_y) * scale
+    inset = 0.15
+    xa, xb = (
+        np.round(xs + inset * pitch).astype(int),
+        np.round(xs + (1 - inset) * pitch).astype(int),
+    )
+    ya, yb = (
+        np.round(ys + inset * pitch).astype(int),
+        np.round(ys + (1 - inset) * pitch).astype(int),
+    )
+    cx0, cy0, cx1, cy1 = (v * scale for v in canvas)
+    tol = 0.02 * pitch
+    col_ok = (xa >= 0) & (xb <= W) & (xs >= cx0 - tol) & (xs + pitch <= cx1 + tol)
+    row_ok = (ya >= 0) & (yb <= H) & (ys >= cy0 - tol) & (ys + pitch <= cy1 + tol)
+    xa_c, xb_c = np.clip(xa, 0, W), np.clip(xb, 0, W)
+    ya_c, yb_c = np.clip(ya, 0, H), np.clip(yb, 0, H)
+    XA, YA = np.meshgrid(xa_c, ya_c)
+    XB, YB = np.meshgrid(xb_c, yb_c)
+    area = np.maximum(1, (XB - XA) * (YB - YA)).astype(np.float32)
+    mean = np.zeros((rows, cols, 3), np.float32)
+    for k in range(3):
+        ii = cv2.integral(lab[:, :, k].astype(np.float64))
+        mean[:, :, k] = (ii[YB, XB] - ii[YA, XB] - ii[YB, XA] + ii[YA, XA]) / area
+    classes = _layout_classes(profile, keys)
+    d = np.linalg.norm(mean - palette_lab[classes], axis=2)
+    limit = np.where(classes == keys.index("."), STRICT_PLAIN, STRICT_PREMIUM)
+    on_screen = row_ok[:, None] & col_ok[None, :]
+    strict = (d < limit) & on_screen
+    if not strict.any():
+        whole = (0, 0, rows - 1, cols - 1)
+        return whole, whole
+    rlo, rhi = _dense_run(strict.sum(axis=1))
+    clo, chi = _dense_run(strict.sum(axis=0))
+    # the background around the board: what squares far outside it look like. A side is the
+    # board's edge only when the line just beyond it is that background; a line that is
+    # covered, off screen or of another color leaves the board open there.
+    rr, cc = np.mgrid[0:rows, 0:cols]
+    far = on_screen & ~strict & ((rr < rlo - 3) | (rr > rhi + 3) | (cc < clo - 3) | (cc > chi + 3))
+    bg = np.median(mean[far], axis=0) if int(far.sum()) >= 12 else None
+
+    def is_background(cells):
+        cells = cells & on_screen
+        if bg is None or int(cells.sum()) < 3:
+            return False
+        close = np.linalg.norm(mean[cells] - bg, axis=1) < BACKGROUND
+        return float(close.mean()) >= 0.6
+
+    in_cols = (cc >= clo) & (cc <= chi)
+    in_rows = (rr >= rlo) & (rr <= rhi)
+    top_open = rlo == 0 or not is_background(in_cols & (rr == rlo - 1))
+    bottom_open = rhi == rows - 1 or not is_background(in_cols & (rr == rhi + 1))
+    left_open = clo == 0 or not is_background(in_rows & (cc == clo - 1))
+    right_open = chi == cols - 1 or not is_background(in_rows & (cc == chi + 1))
+    bounds = (
+        0 if top_open else rlo,
+        0 if left_open else clo,
+        rows - 1 if bottom_open else rhi,
+        cols - 1 if right_open else chi,
+    )
+    return bounds, (rlo, clo, rhi, chi)
+
+
+def measure_extent(frame: np.ndarray, profile: Profile, view: BoardView, work_width: int = 1200):
+    """Re-measure the board's extent in a frame where it has not moved (it may have grown)."""
+    keys, palette_lab = _palette(profile)
+    H, W = frame.shape[:2]
+    s = min(1.0, work_width / W)
+    small = cv2.resize(frame, (round(W * s), round(H * s)), interpolation=cv2.INTER_AREA)
+    return _measure(to_lab(small), s, view.grid, view.canvas, profile, palette_lab, keys)
+
+
+def with_extent(view: BoardView, measured, profile: Profile) -> BoardView:
+    """The same view with its visible squares recomputed for a new measurement.
+
+    Only squares in the stretch where empty squares were found are read; the bounds say where
+    the board ends, which can lie beyond what is visible."""
+    extent, span = measured
+    grid = view.grid
+    cx0, cy0, cx1, cy1 = view.canvas
+    tol = 0.02 * grid.pitch_x
+    visible = np.zeros((profile.height, profile.width), bool)
+    for r in range(span[0], span[2] + 1):
+        for c in range(span[1], span[3] + 1):
+            x, y, w, h = grid.cell_rect(r, c)
+            visible[r, c] = (
+                x >= cx0 - tol and y >= cy0 - tol and x + w <= cx1 + tol and y + h <= cy1 + tol
+            )
+    return BoardView(
+        grid,
+        visible,
+        view.match_rate,
+        view.margin,
+        view.cells_used,
+        tuple(extent),
+        view.canvas,
+        tuple(span),
+    )
+
+
+def locate_board(
+    frame: np.ndarray, profile: Profile, work_width: int = 1200, hint: BoardHint | None = None
+) -> BoardView:
     keys, palette_lab = _palette(profile)
     H, W = frame.shape[:2]
     s = min(1.0, work_width / W)
@@ -290,25 +546,43 @@ def locate_board(frame: np.ndarray, profile: Profile, work_width: int = 1200) ->
         py = (np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)) * mask)[:, x0 : x1 + 1].sum(axis=1)
     layout = alias[_layout_classes(profile, keys)].astype(np.int32)
     plain = int(alias[keys.index(".")])
+    plain_key = keys.index(".")
     best = None
     for pitch_c, fx, fy, lattice in _fit_lattices(cls, len(keys), px, py, min(x1 - x0, y1 - y0)):
         if int((lattice >= 0).sum()) < MIN_CELLS:
             continue
+        # only squares that show an empty square's own color take part: the background around
+        # the board and anything lying over it must not be matched against the layout
+        strict, _ = _survey(small, lab, palette_lab, plain_key, fx, fy, pitch_c, lattice.shape)
+        # plain squares must show the plain color exactly (the background around the board
+        # looks almost the same); premium squares are recognised by their own color
+        lattice = np.where(strict | (lattice != plain), lattice, -1)
+        if int((lattice >= 0).sum()) < MIN_CELLS:
+            continue
         lattice = _drop_blocks(lattice, layout, plain)
-        reg = _register(lattice, layout, plain, len(keys))
+        reg = _register(lattice, layout, plain, len(keys), profile.period)
         if reg is None:
             continue
-        quality = reg[2] + reg[3]
+        quality = reg[1] + reg[2]
         if best is None or quality > best[0]:
             best = (quality, pitch_c, fx, fy, lattice, reg)
     if best is None:
         raise BoardNotFound("too few board squares visible")
-    _, pitch, ox, oy, lattice, (r0, c0, match_rate, margin) = best
+    _, pitch, ox, oy, lattice, (cands, match_rate, margin) = best
     used = int((lattice >= 0).sum())
     if match_rate < 0.6 or margin < 0.25:
         raise BoardNotFound(
             f"board pattern not recognized (match {match_rate:.2f}, margin {margin:.2f})"
         )
+    strict, frac = _survey(small, lab, palette_lab, plain_key, ox, oy, pitch, lattice.shape)
+    if strict.any():
+        rlo, rhi = _dense_run(strict.sum(axis=1))
+        clo, chi = _dense_run(strict.sum(axis=0))
+        box = (rlo, rhi, clo, chi)
+    else:
+        box = (0, lattice.shape[0] - 1, 0, lattice.shape[1] - 1)
+    r0, c0 = _choose_offset(cands, strict, frac, profile, hint, box)
+    canvas = _canvas(mask, s, W, H)
 
     grid = Grid(
         (ox - c0 * pitch) / s,
@@ -319,15 +593,11 @@ def locate_board(frame: np.ndarray, profile: Profile, work_width: int = 1200) ->
         profile.width,
         match_rate,
     )
-    visible = np.zeros((profile.height, profile.width), bool)
-    tol = 0.02 * grid.pitch_x
-    # squares must lie inside the game's own canvas: Discord's sidebar, the letterbox bars and
-    # video tiles around it show nothing of the board but can look like tiles
-    cx0, cy0, cx1, cy1 = _canvas(mask, s, W, H)
-    for r in range(profile.height):
-        for c in range(profile.width):
-            x, y, w, h = grid.cell_rect(r, c)
-            visible[r, c] = (
-                x >= cx0 - tol and y >= cy0 - tol and x + w <= cx1 + tol and y + h <= cy1 + tol
-            )
-    return BoardView(grid, visible, match_rate, margin, used)
+    # the board's extent: measured on the squares themselves, so a board that has grown, or
+    # that is hidden in part, is judged by what is there rather than by the layout alone
+    extent = _measure(lab, s, grid, canvas, profile, palette_lab, keys)
+    base = BoardView(
+        grid, np.zeros((profile.height, profile.width), bool), match_rate, margin, used
+    )
+    base.canvas = canvas
+    return with_extent(base, extent, profile)

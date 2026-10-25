@@ -26,7 +26,7 @@ Cell = tuple[str, bool] | None
 
 
 class Board:
-    __slots__ = ("_cells", "_hash", "_stamps", "height", "width")
+    __slots__ = ("_bounds", "_cells", "_hash", "_stamps", "height", "width")
 
     def __init__(
         self,
@@ -34,6 +34,7 @@ class Board:
         height: int,
         cells: Iterable[Iterable[Cell]] | None = None,
         stamps: dict[tuple[int, int], int] | None = None,
+        bounds: tuple[int, int, int, int] | None = None,
     ):
         """stamps: the value shown on a played tile when it differs from the letter's own.
 
@@ -43,6 +44,9 @@ class Board:
         self.width = width
         self.height = height
         self._stamps = tuple(sorted((stamps or {}).items()))
+        # the real board when it is smaller than the room the profile allows for growth: first
+        # and last row and column. Squares outside it are walls and cannot be played.
+        self._bounds = tuple(bounds) if bounds is not None else None
         if cells is None:
             self._cells = tuple((None,) * width for _ in range(height))
         else:
@@ -91,7 +95,7 @@ class Board:
         return [(r, c, v) for (r, c), v in self._stamps]
 
     def with_stamps(self, stamps: dict[tuple[int, int], int]) -> Board:
-        return Board(self.width, self.height, self._cells, stamps)
+        return Board(self.width, self.height, self._cells, stamps, self._bounds)
 
     def to_rows(self) -> list[str]:
         out = []
@@ -99,7 +103,20 @@ class Board:
             out.append("".join("." if c is None else (c[0].lower() if c[1] else c[0]) for c in row))
         return out
 
+    @property
+    def bounds(self) -> tuple[int, int, int, int] | None:
+        return self._bounds
+
+    def with_bounds(self, bounds) -> Board:
+        return Board(self.width, self.height, self._cells, self.stamps, bounds)
+
+    def inside(self, row: int, col: int) -> bool:
+        b = self._bounds
+        return b is None or (b[0] <= row <= b[2] and b[1] <= col <= b[3])
+
     def get(self, row: int, col: int) -> Cell:
+        if self._bounds is not None and not self.inside(row, col):
+            return WALL_CELL
         return self._cells[row][col]
 
     def letter(self, row: int, col: int) -> str | None:
@@ -110,7 +127,7 @@ class Board:
         return self._cells[row][col] is not None
 
     def in_bounds(self, row: int, col: int) -> bool:
-        return 0 <= row < self.height and 0 <= col < self.width
+        return 0 <= row < self.height and 0 <= col < self.width and self.inside(row, col)
 
     def is_empty(self) -> bool:
         """True when no tile is known to be on the board (unknown squares do not count)."""
@@ -135,7 +152,7 @@ class Board:
         cells = [list(row) for row in self._cells]
         for t in tiles:
             cells[t.row][t.col] = (t.letter, t.blank)
-        return Board(self.width, self.height, cells, self.stamps)
+        return Board(self.width, self.height, cells, self.stamps, self._bounds)
 
     def transpose(self) -> Board:
         return Board(
@@ -143,6 +160,9 @@ class Board:
             self.width,
             zip(*self._cells, strict=True),
             {(c, r): v for (r, c), v in self._stamps},
+            None
+            if self._bounds is None
+            else (self._bounds[1], self._bounds[0], self._bounds[3], self._bounds[2]),
         )
 
     @property
@@ -154,11 +174,12 @@ class Board:
             isinstance(other, Board)
             and self._cells == other._cells
             and self._stamps == other._stamps
+            and self._bounds == other._bounds
         )
 
     def __hash__(self) -> int:
         if self._hash is None:
-            self._hash = hash((self._cells, self._stamps))
+            self._hash = hash((self._cells, self._stamps, self._bounds))
         return self._hash
 
     def __repr__(self) -> str:

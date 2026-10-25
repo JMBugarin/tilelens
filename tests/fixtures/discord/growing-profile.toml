@@ -1,0 +1,109 @@
+# A profile for a 27x19 board that grows, measured from a real game on screen. Test fixture only.
+format = "tilelens-profile"
+version = 1
+name = "Growing 27x19"
+
+[board]
+width = 27
+height = 19
+expand = 12
+period = [12, 12]
+layout = [
+  "...d..d.d..d...d..d.d..d...",
+  ".d...D...D...d...D...D...d.",
+  "....d.t.t.d.....d.t.t.d....",
+  "dDd....T....dDd....T....dDd",
+  "....d.t.t.d.....d.t.t.d....",
+  ".d...D...D...d...D...D...d.",
+  "...d..d.d..d...d..d.d..d...",
+  "....D.....D.....D.....D....",
+  "t.t....d....t.t....d....t.t",
+  "...D...D...D.*.D...D...D...",
+  "t.t....d....t.t....d....t.t",
+  "....D.....D.....D.....D....",
+  "...d..d.d..d...d..d.d..d...",
+  ".d...D...D...d...D...D...d.",
+  "....d.t.t.d.....d.t.t.d....",
+  "dDd....T....dDd....T....dDd",
+  "....d.t.t.d.....d.t.t.d....",
+  ".d...D...D...d...D...D...d.",
+  "...d..d.d..d...d..d.d..d...",
+]
+
+[board.legend]
+d = "double_letter"
+t = "triple_letter"
+D = "double_word"
+T = "triple_word"
+"*" = { name = "start" }
+
+[rules]
+start_squares = [[9, 13]]
+word_premium_stacking = "multiply"
+
+[rack]
+size = 7
+blanks = 4
+
+[scoring]
+full_rack_bonus = 0
+
+[tiles.values]
+A = 1
+B = 3
+C = 3
+D = 2
+E = 1
+F = 4
+G = 2
+H = 4
+I = 1
+J = 8
+K = 5
+L = 2
+M = 3
+N = 1
+O = 1
+P = 3
+Q = 10
+R = 1
+S = 1
+T = 1
+U = 1
+V = 4
+W = 4
+X = 8
+Y = 4
+Z = 10
+
+[tiles.distribution]
+A = 18
+B = 4
+C = 3
+D = 7
+E = 23
+F = 4
+G = 6
+H = 4
+I = 18
+J = 2
+K = 4
+L = 8
+M = 4
+N = 9
+O = 15
+P = 3
+Q = 2
+R = 12
+S = 8
+T = 11
+U = 8
+V = 4
+W = 4
+X = 2
+Y = 4
+Z = 2
+
+[appearance]
+rack_tile = "#EF8E66"
+squares = { "." = "#FBE6CA", d = "#B7E4FC", t = "#F8D272", D = "#BDF4B2", T = "#F1A27F" }

@@ -149,6 +149,9 @@ class LiveController:
         self._aligned_at = -1e9
         self._rack_tiles = 0
         self._star_logged = False
+        self._relocated: list[float] = []
+        self._warned_at = -1e9
+        self._bounds_logged = None
         self._soft_sig = None
         self._soft_since = 0.0
         self._assumed: tuple[str, float] | None = None
@@ -277,10 +280,22 @@ class LiveController:
         reading = self.recognizer.read(frame)
         if getattr(self.recognizer, "locates", 0) != locates:
             self._aligned_at = now
+            self._relocated.append(now)
+            del self._relocated[:-6]
+            lately = len(self._relocated) >= 4 and now - self._relocated[-4] < 5.0
+            if lately and now - self._warned_at > 30.0:
+                self._warned_at = now
+                self.event("the board was found again 4 times in 5 s: the view keeps changing")
         self.last_reading = reading
         self.last_grid = reading.grid
         self.last_frame_size = (frame.shape[1], frame.shape[0])
         self.last_read_ms = reading.elapsed * 1000
+        bounds = getattr(reading, "bounds", None)
+        if bounds != self._bounds_logged:
+            if self._bounds_logged is not None and bounds is not None:
+                top, left, bottom, right = bounds
+                self.event(f"board edges: rows {top}-{bottom}, columns {left}-{right}")
+            self._bounds_logged = bounds
         if getattr(reading, "star_seen", False) != self._star_logged:
             self._star_logged = bool(getattr(reading, "star_seen", False))
             self.event(
@@ -718,7 +733,9 @@ class LiveController:
             return
         self._submitted_at = now
         self.searches_started += 1
-        self.solver.submit(pid, board.to_rows(), rack_to_str(rack), board.stamp_list())
+        self.solver.submit(
+            pid, board.to_rows(), rack_to_str(rack), board.stamp_list(), board.bounds
+        )
         if self._showing() and self._refines(board, rack):
             snap = self._snapshot
             self._refining = (pid, base)
@@ -830,7 +847,8 @@ class LiveController:
                     played = cell.letter and cell.state not in ("tentative", "unknown")
                     out.append((cell.letter, cell.blank) if played else None)
             cells.append(out)
-        board = Board(len(cells[0]), len(cells), cells, reading.placed().stamps)
+        placed = reading.placed()
+        board = Board(len(cells[0]), len(cells), cells, placed.stamps, placed.bounds)
         if rack is not None:
             letters = [ch.upper() if ch != BLANK else BLANK for ch in rack if not ch.isspace()]
         else:

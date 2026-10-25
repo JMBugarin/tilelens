@@ -73,7 +73,7 @@ def resolve_unknown(board: Board, profile: Profile) -> Board:
     if not board.has_unknown() or not board.is_empty() or not profile.start_squares:
         return board
     if all(board.get(r, c) is None for r, c in profile.start_squares):
-        return Board(board.width, board.height)
+        return Board(board.width, board.height, None, None, board.bounds)
     return board
 
 

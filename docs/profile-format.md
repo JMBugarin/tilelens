@@ -72,6 +72,8 @@ path = "demo_words.txt"
 | `name` | yes | Display name. |
 | `board.width`, `board.height` | yes | Grid size, 2 to 40. |
 | `board.layout` | yes | One string per row. `.` or space is a plain square; any other character must be in `board.legend`. |
+| `board.expand` | no | Squares of room to add on every side for a board that grows during play. The premium pattern repeats into the room, so it needs `board.period`. TileLens finds the board's real edges on screen and treats everything outside them as wall. Default 0. |
+| `board.period` | with `expand` | `[rows, columns]` after which the layout repeats. The layout must repeat exactly (a start marker such as `*` may break the pattern once); TileLens names the first square that does not. |
 | `board.legend` | no | Character to premium. Either a built-in name (`double_letter`, `triple_letter`, `double_word`, `triple_word`) or a table `{ name, letter, word }` with integer multipliers of at least 1. |
 | `rules.start_squares` | yes | List of `[row, col]` (zero-based). The first placement on an empty board must cover at least one. `[]` allows any first placement. |
 | `rules.min_word_length` | no | Default 2. |
