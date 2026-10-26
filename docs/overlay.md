@@ -110,3 +110,11 @@ Not verified:
   hidden was measured.
 
 See the manual checklist in `docs/manual-verification.md`.
+
+## Windows over the board
+
+Other windows (the Discord frame, the game's own panels, TileLens's panel when it is not excluded
+from capture) are never read as tiles. Dark colors are not tile colors, a square that keeps
+reading as something other than a tile is remembered as an obstruction and skipped, and only
+letters that form valid words are learned into the calibration. A calibration poisoned by an
+earlier version is cleaned on load.
