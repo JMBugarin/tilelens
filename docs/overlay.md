@@ -54,7 +54,7 @@ It draws in a glass style:
 - **Ghost tiles** for the selected play only: dashed cyan outlines on dark glass with the
   letter and its point value and a "+N pts" label above. Letters already on
   the board that are part of the word get a cyan ring. A blank's letter is drawn in cyan.
-- **Tiles read.** A thin solid yellow outline around every played tile on the board that
+- **Tiles read.** A solid magenta outline around every played tile on the board that
   TileLens has read and is using. A tile without an outline was not taken into account: zoom
   in or out until it has one. Suggestions are cyan and dashed.
 - **Rack outline.** Green with "Rack confirmed · 7/7" when every rack tile was read, amber with

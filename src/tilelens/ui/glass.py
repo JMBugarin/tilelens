@@ -15,7 +15,7 @@ from tilelens.state.names import square_name
 CYAN = QColor(34, 211, 238)
 GREEN = QColor(52, 211, 153)
 AMBER = QColor(251, 191, 36)
-YELLOW = QColor(255, 224, 51)  # a board tile TileLens has read
+MAGENTA = QColor(255, 20, 147)  # a board tile TileLens has read
 INK = QColor(240, 246, 255)
 GLASS = QColor(13, 18, 36, 215)
 GHOST_FILL = QColor(8, 28, 44, 185)
@@ -186,7 +186,7 @@ def paint_seen(p: QPainter, rects: list[QRectF]) -> None:
         return
     side = min(rects[0].width(), rects[0].height())
     radius = side * 0.18
-    p.setPen(QPen(alpha(YELLOW, 235), max(2.0, side * 0.05)))
+    p.setPen(QPen(alpha(MAGENTA, 245), max(3.0, side * 0.07)))
     p.setBrush(Qt.BrushStyle.NoBrush)
     for rect in rects:
         p.drawRoundedRect(rect.adjusted(-1, -1, 1, 1), radius, radius)
@@ -220,7 +220,7 @@ __all__ = [
     "AMBER",
     "CYAN",
     "GREEN",
-    "YELLOW",
+    "MAGENTA",
     "OverlayScene",
     "paint_pill",
     "paint_scene",
