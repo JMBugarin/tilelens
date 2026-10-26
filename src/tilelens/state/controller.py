@@ -15,7 +15,7 @@ from tilelens.solver.movegen import SearchResult
 from tilelens.state.memory import BoardMemory, Coverage
 from tilelens.state.names import square_name
 from tilelens.state.position import position_id
-from tilelens.vision.lexfix import drop_isolated, settle
+from tilelens.vision.lexfix import drop_isolated, settle, valid_word_cells
 from tilelens.vision.recognizer import (
     COMMITTED,
     RECENT,
@@ -473,7 +473,11 @@ class LiveController:
         order = [BLANK if t.blank else (t.letter or "") for t in reading.rack]
         consolidate = getattr(self.recognizer, "consolidate", None)
         if consolidate is not None and reading.confident:
-            consolidate(reading)
+            # learn letter shapes only from tiles that make words: anything else on screen can
+            # look like a letter, and a shape learned from it makes the next one easier to believe
+            trusted = valid_word_cells(reading, self.lexicon) if self.lexicon is not None else None
+            if trusted is None or trusted:
+                consolidate(reading, cells=trusted)
         self._rack_tiles = len(reading.rack)
         remember = getattr(self.recognizer, "remember_rack", None)
         if remember is not None and not reading.rack_uncertain:
