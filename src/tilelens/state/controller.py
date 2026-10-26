@@ -538,7 +538,7 @@ class LiveController:
             more = f" (+{len(unsure) - 1} more)" if len(unsure) > 1 else ""
             guess_text = f"looks like {guess}" if guess else "is unclear"
             notice = (
-                f"{name[0].upper()}{name[1:]} {guess_text} (outlined in yellow); "
+                f"{name[0].upper()}{name[1:]} {guess_text}; "
                 f"plays leave it out until you tap its letter{more}"
             )
         elif fixed is not None and any(was != now for _, _, was, now in fixed.changed):

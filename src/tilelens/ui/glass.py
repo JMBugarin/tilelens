@@ -15,7 +15,7 @@ from tilelens.state.names import square_name
 CYAN = QColor(34, 211, 238)
 GREEN = QColor(52, 211, 153)
 AMBER = QColor(251, 191, 36)
-YELLOW = QColor(255, 224, 51)  # a tile that needs confirming: never the cyan of a suggestion
+YELLOW = QColor(255, 224, 51)  # a board tile TileLens has read
 INK = QColor(240, 246, 255)
 GLASS = QColor(13, 18, 36, 215)
 GHOST_FILL = QColor(8, 28, 44, 185)
@@ -39,11 +39,11 @@ class OverlayScene:
     rack_read: tuple[int, int] | None = None
     value_of: Callable[[str, bool], int] | None = None
     framed: bool = False
-    unsure: list[tuple[QRectF, str, bool]] = field(default_factory=list)
+    seen: list[QRectF] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
-        return self.move is None and self.board is None and self.rack is None and not self.unsure
+        return self.move is None and self.board is None and self.rack is None and not self.seen
 
 
 def _font(px: float, bold: bool = True) -> QFont:
@@ -180,28 +180,16 @@ def paint_ghosts(
     )
 
 
-def paint_unsure(p: QPainter, rect: QRectF, label: str, primary: bool) -> None:
-    """Outline a tile that needs confirming, in yellow. Suggestions are cyan and dashed."""
-    side = min(rect.width(), rect.height())
+def paint_seen(p: QPainter, rects: list[QRectF]) -> None:
+    """Outline every board tile TileLens has read, so a tile left out shows as a gap."""
+    if not rects:
+        return
+    side = min(rects[0].width(), rects[0].height())
     radius = side * 0.18
-    box = rect.adjusted(-2, -2, 2, 2)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.setBrush(alpha(YELLOW, 70 if primary else 36))
-    p.drawRoundedRect(box, radius, radius)
-    if primary:
-        for i, a in enumerate((50, 32, 16)):
-            grow = side * 0.05 * (i + 1)
-            p.setPen(QPen(alpha(YELLOW, a), side * 0.06))
-            p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawRoundedRect(box.adjusted(-grow, -grow, grow, grow), radius + grow, radius + grow)
-    pen = QPen(YELLOW, max(3.0 if primary else 2.0, side * (0.09 if primary else 0.05)))
-    p.setPen(pen)
+    p.setPen(QPen(alpha(YELLOW, 235), max(2.0, side * 0.05)))
     p.setBrush(Qt.BrushStyle.NoBrush)
-    p.drawRoundedRect(box, radius, radius)
-    size = max(10.0, min(16.0, side * 0.3))
-    top = box.top() - size * 1.4
-    anchor = QPointF(box.center().x(), top if top > size else box.bottom() + size * 1.4)
-    paint_pill(p, anchor, label, YELLOW, size=size if primary else size * 0.8, align="center")
+    for rect in rects:
+        p.drawRoundedRect(rect.adjusted(-1, -1, 1, 1), radius, radius)
 
 
 def paint_rack(p: QPainter, rect: QRectF, read: tuple[int, int] | None) -> None:
@@ -225,8 +213,7 @@ def paint_scene(p: QPainter, scene: OverlayScene) -> None:
         paint_rack(p, scene.rack, scene.rack_read)
     if scene.move is not None and scene.rect_of is not None:
         paint_ghosts(p, scene.move, scene.rect_of, scene.value_of)
-    for rect, label, primary in reversed(scene.unsure):
-        paint_unsure(p, rect, label, primary)
+    paint_seen(p, scene.seen)
 
 
 __all__ = [

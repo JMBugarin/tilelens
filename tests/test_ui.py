@@ -426,54 +426,36 @@ def _yellow_pixels(img, rect=None):
     return count
 
 
-def test_a_tile_to_confirm_is_outlined_in_yellow_not_in_the_suggestion_color(qapp):
+def test_every_board_tile_that_was_read_is_outlined_in_yellow(qapp):
     from PySide6.QtCore import QRectF
 
     from tilelens.ui.glass import OverlayScene
 
-    tile = QRectF(150, 120, 60, 60)
-    img = _paint(OverlayScene(unsure=[(tile, "M18: Y?", True)]))
-    assert _yellow_pixels(img, tile.adjusted(-8, -8, 8, 8)) > 150  # a solid outline around it
+    a, b = QRectF(150, 120, 60, 60), QRectF(250, 120, 60, 60)
+    img = _paint(OverlayScene(seen=[a, b]))
+    assert _yellow_pixels(img, a.adjusted(-8, -8, 8, 8)) > 150
+    assert _yellow_pixels(img, b.adjusted(-8, -8, 8, 8)) > 150
     assert _yellow_pixels(img, QRectF(0, 0, 100, 100)) == 0  # and nowhere else
-    assert OverlayScene(unsure=[(tile, "?", True)]).empty is False
+    assert OverlayScene(seen=[a]).empty is False
     assert _yellow_pixels(_paint(OverlayScene())) == 0
 
 
-def test_the_first_tile_asked_about_is_marked_more_strongly(qapp):
-    from PySide6.QtCore import QRectF
-
-    from tilelens.ui.glass import OverlayScene
-
-    a, b = QRectF(40, 120, 60, 60), QRectF(250, 120, 60, 60)
-    img = _paint(OverlayScene(unsure=[(a, "Tile 4: Y?", True), (b, "?", False)]))
-    first = _yellow_pixels(img, a.adjusted(-10, -10, 10, 10))
-    other = _yellow_pixels(img, b.adjusted(-10, -10, 10, 10))
-    assert first > other > 50
-
-
-def test_session_marks_the_rack_tile_and_the_board_square_it_asks_about(
-    qapp, calibration, tmp_path
-):
-    from tilelens.state.controller import Snapshot
+def test_session_outlines_the_played_tiles_it_reads_and_nothing_else(qapp, calibration, tmp_path):
+    from tilelens.vision.recognizer import COMMITTED, RECENT
 
     session, game, frame = make_session(qapp, calibration, tmp_path)
     run_until(qapp, session, {Status.READY})
-    ctrl, mapper = session.controller, session.overlay_mapper()
-    region = session.region_provider()
-    reading = ctrl.last_reading
-    snap = Snapshot(
-        Status.READY,
-        unsure=(("rack", 1, "Y", ("Y", "V")), ("cell", (3, 4), "N", ("N", "H"))),
-    )
-    marks = session._unsure_marks(snap, reading, mapper, region, ctrl.last_frame_size)
-    assert [m[2] for m in marks] == [True, False]  # the first is the one being asked about
-    fw, _ = ctrl.last_frame_size
-    x, y, w, h = reading.rack[1].rect
-    scale = region.width / fw
-    assert marks[0][0].x() == pytest.approx(x * scale) and marks[0][1] == "Tile 2: Y?"
-    assert marks[1][0] == mapper.rect(3, 4, 0) and marks[1][1] == "?"
-    asked_cell = Snapshot(Status.READY, unsure=(("cell", (3, 4), "N", ()),))
-    label = session._unsure_marks(asked_cell, reading, mapper, region, ctrl.last_frame_size)[0][1]
-    assert label == "E4: N?"
-    held = Snapshot(Status.READY, held=0, unsure=asked_cell.unsure)
-    assert session._unsure_marks(held, reading, mapper, region, ctrl.last_frame_size) == []
+    reading, mapper = session.controller.last_reading, session.overlay_mapper()
+    expected = {
+        (r, c)
+        for r, row in enumerate(reading.cells)
+        for c, cell in enumerate(row)
+        if cell.letter and cell.state in (COMMITTED, RECENT)
+    }
+    assert expected
+    rects = session._seen_tiles(reading, mapper)
+    assert len(rects) == len(expected)
+    assert {(round(r.x()), round(r.y())) for r in rects} == {
+        (round(mapper.rect(r, c, 0).x()), round(mapper.rect(r, c, 0).y())) for r, c in expected
+    }
+    assert session.overlay_scene().seen
