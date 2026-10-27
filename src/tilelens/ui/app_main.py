@@ -3,14 +3,23 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from tilelens.capture.source import CallableSource
 from tilelens.platforms import UnsupportedPlatform, get_adapter
 from tilelens.synth.game import calibration_samples
+from tilelens.ui import notify
+from tilelens.ui.app_icon import app_icon, tray_icon
 from tilelens.ui.auto_calibrate import AutoCalibrationDialog
 from tilelens.ui.calibrate_dialog import CalibrationDialog
+from tilelens.ui.design import (
+    Appearance,
+    apply_app_style,
+    set_default_material,
+    set_reduce_motion,
+    system_material,
+)
+from tilelens.ui.glass_dialog import GlassDialog
 from tilelens.ui.main_window import MainWindow
 from tilelens.ui.region_select import RegionSelector
 from tilelens.ui.session import LiveSession
@@ -18,10 +27,36 @@ from tilelens.ui.settings import Settings
 from tilelens.vision.recognizer import calibrate
 
 
+def install_design(settings: Settings) -> Appearance:
+    """Application font, palette, stylesheet and icon, and the one Appearance every glass window
+    follows.
+
+    The widget style is swapped for GlassStyle (Fusion with vector indicators) because the
+    dialogs use stock inputs. The tray menu is unaffected on macOS, where the system draws it,
+    and on Windows it is painted by Qt from the same stylesheet.
+    """
+    app = QApplication.instance()
+    appearance = Appearance(settings.appearance, app, initial=system_material())
+    set_default_material(appearance.material)
+    set_reduce_motion(settings.reduce_motion)
+    apply_app_style(app, appearance.material, widget_style=True)
+    app.setWindowIcon(app_icon())
+
+    def restyle(material) -> None:
+        set_default_material(material)
+        apply_app_style(app, material, widget_style=True)
+
+    appearance.appearance_changed.connect(restyle)
+    GlassDialog.appearance = appearance
+    notify.bind(appearance)
+    return appearance
+
+
 class App:
     def __init__(self, settings: Settings, demo: bool = False, demo_seed: int = 3):
         self.settings = settings
         self.demo = demo
+        self.appearance = install_design(settings)
         self.fake = None
         adapter = None
         if demo:
@@ -42,18 +77,23 @@ class App:
                 print(exc, file=sys.stderr)
                 raise SystemExit(2) from None
             self.session = LiveSession(settings, adapter=adapter)
+        self.session.appearance = self.appearance
+        self.session.settings_changed.connect(self._settings_changed)
         self.window = MainWindow(self.session)
+        self.window.bind(self.appearance)
+        self.window.on_shown = self.session._shown
+        self.window.settings_changed.connect(self._settings_changed)
         self.window.region_btn.clicked.connect(self.select_region)
         self.window.cal_btn.clicked.connect(self.calibrate)
         self.session.panel.calibrate_clicked.connect(self.calibrate)
         self.adapter = adapter
+        if adapter is not None:
+            self.session.panel.permission_clicked.connect(self._open_permission)
         if demo:
             self.window.region_btn.setEnabled(False)
             self.demo_calibrate()
         elif adapter is not None and adapter.screen_permission() is False:
             adapter.request_permission()
-            self.window.show_message(adapter.permission_help())
-        self.window.resize(520, 400)
         self.window.show()
         QTimer.singleShot(0, self._park_window)
         started = self.session.start()
@@ -66,7 +106,24 @@ class App:
             self._auto_start()
         if started and not demo:
             # the floating panel is the interface while playing; the window would cover the game
-            QTimer.singleShot(1500, self.window.hide)
+            QTimer.singleShot(1500, self._hide_when_set_up)
+
+    def _open_permission(self) -> None:
+        if self.adapter is not None:
+            self.adapter.request_permission()
+        self.show_settings()
+
+    def _hide_when_set_up(self) -> None:
+        if not self.window.needs_setup:
+            self.window.hide()
+
+    def _settings_changed(self, key: str) -> None:
+        if key == "appearance":
+            self.appearance.set_mode(self.settings.appearance)
+        elif key == "reduce_motion":
+            set_reduce_motion(self.settings.reduce_motion)
+        if not self.demo:
+            self.settings.save()
 
     def _auto_start(self) -> None:
         """Without a calibration, keep trying: as soon as the game is on screen, learn it."""
@@ -78,9 +135,7 @@ class App:
             self.session.show_setup_panel()
 
     def _make_tray(self) -> None:
-        pix = QPixmap(32, 32)
-        pix.fill(QColor("#22d3ee"))
-        self.tray = QSystemTrayIcon(QIcon(pix))
+        self.tray = QSystemTrayIcon(tray_icon())
         menu = QMenu()
         menu.addAction("Show settings", self.show_settings)
         menu.addAction("Pause / resume", self.session.toggle_pause)
@@ -89,6 +144,11 @@ class App:
         menu.addAction("Quit TileLens", QApplication.quit)
         self.tray.setContextMenu(menu)
         self.tray.setToolTip("TileLens")
+        self.tray.activated.connect(
+            lambda reason: (
+                reason == QSystemTrayIcon.ActivationReason.Trigger and self.show_settings()
+            )
+        )
         self.tray.show()
         self._menu = menu
 
@@ -100,9 +160,8 @@ class App:
     def _park_window(self) -> None:
         # bottom-left corner, clear of the game's rack and board
         screen = self.window.screen().availableGeometry()
-        self.window.move(
-            screen.left() + 8, screen.bottom() - self.window.frameGeometry().height() - 8
-        )
+        glass = self.window.glass_geometry()
+        self.window.move_glass_to(screen.left() + 8, screen.bottom() - glass.height() - 8)
 
     def demo_calibrate(self) -> None:
         samples, hint = calibration_samples(
@@ -114,9 +173,10 @@ class App:
 
     def _float(self, dlg) -> None:
         """Open over the game, even when it is full screen in its own Space."""
-        dlg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        dlg.setWindowFlag(Qt.WindowType.Tool, True)
-        dlg.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
+        if not isinstance(dlg, GlassDialog):
+            dlg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+            dlg.setWindowFlag(Qt.WindowType.Tool, True)
+            dlg.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         if self.adapter is not None:
             self.adapter.show_on_all_spaces(int(dlg.winId()))
 
@@ -128,12 +188,13 @@ class App:
 
     def _region_chosen(self, region) -> None:
         self.session.set_region(region)
-        self.window.show_message("Region saved. Now calibrate.")
+        self.window.toast("Region saved. Now calibrate.")
 
     def calibrate(self) -> CalibrationDialog | AutoCalibrationDialog | None:
         if not self.demo and self.session.profile.appearance is not None:
             if self.session.auto_calibrate():
                 self.window.show_message("")
+                self.window.toast("Learned the game")
                 return None
             if self.session.needs_letters is None:
                 return None  # the reason is in the panel
@@ -168,6 +229,7 @@ class App:
             if dlg.exec() and dlg.result is not None:
                 self.session.set_calibration(dlg.result)
                 self.window.show_message("")
+                self.window.toast("Calibration saved")
             return dlg
         dlg = CalibrationDialog(
             frame,
@@ -181,6 +243,7 @@ class App:
         if dlg.exec() and dlg.result is not None:
             self.session.set_calibration(dlg.result)
             self.window.show_message("")
+            self.window.toast("Calibration saved")
         return dlg
 
     def shutdown(self) -> None:

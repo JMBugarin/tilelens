@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from tilelens.capture.source import CallableSource  # noqa: E402
 from tilelens.platforms.base import Region  # noqa: E402
 from tilelens.state.controller import Snapshot, Status  # noqa: E402
+from tilelens.state.phase import phase_of  # noqa: E402
 from tilelens.synth.game import FakeGame, calibration_samples  # noqa: E402
 from tilelens.ui.calibrate_dialog import CalibrationDialog, to_qimage  # noqa: E402
 from tilelens.ui.cards import ResultCard, describe  # noqa: E402
@@ -244,7 +245,7 @@ def test_main_window_states(qapp, calibration, tmp_path, status):
     if status != Status.READY:
         snap = Snapshot(status, "detail text")
     win.show_snapshot(snap)
-    assert win.status.text() == status.value
+    assert win.status.text() == phase_of(snap).label
     shown = [c.move_shown for c in win.cards if c.move_shown is not None]
     assert bool(shown) == (status == Status.READY)
     assert win.check_btn.isEnabled() is False
@@ -321,8 +322,20 @@ def test_square_names():
     assert square_name(18, 26) == "AA19"
 
 
-def test_glass_scene_draws_frame_ghosts_and_rack(qapp, calibration, tmp_path):
-    from tilelens.ui.glass import CYAN, GREEN
+def painted(scene, w, h, guides=None, dpr=1):
+    from tilelens.ui.glass import paint_scene
+
+    img = QImage(round(w * dpr), round(h * dpr), QImage.Format.Format_ARGB32_Premultiplied)
+    img.setDevicePixelRatio(dpr)
+    img.fill(0)
+    p = QPainter(img)
+    paint_scene(p, scene, guides=guides)
+    p.end()
+    return img
+
+
+def test_glass_scene_draws_ghosts_guides_and_rack(qapp, calibration, tmp_path):
+    from tilelens.ui.glass import AMBER, CYAN, GREEN
 
     session, game, frame = make_session(qapp, calibration, tmp_path)
     snap = run_until(qapp, session, {Status.READY})
@@ -330,29 +343,65 @@ def test_glass_scene_draws_frame_ghosts_and_rack(qapp, calibration, tmp_path):
     scene = session.overlay_scene()
     assert scene.board is not None and scene.move is not None
     h, w = frame["img"].shape[:2]
-    img = QImage(w, h, QImage.Format.Format_ARGB32)
-    img.fill(0)
-    p = QPainter(img)
-    from tilelens.ui.glass import paint_scene
+    img = painted(scene, w, h, guides=1.0)
 
-    paint_scene(p, scene)
-    p.end()
-
-    def near(x, y, color, radius=6):
+    def near(x, y, colors, radius=6):
         for dx in range(-radius, radius + 1):
             for dy in range(-radius, radius + 1):
                 c = img.pixelColor(int(x + dx), int(y + dy))
-                if c.alpha() > 150 and abs(c.hue() - color.hue()) < 12 and c.saturation() > 90:
+                if c.alpha() < 150 or c.saturation() <= 90:
+                    continue
+                if any(abs(c.hue() - color.hue()) < 12 for color in colors):
                     return True
         return False
 
     mapper = session.overlay_mapper()
     for t in scene.move.tiles:
         rect = mapper.rect(t.row, t.col)
-        assert near(rect.left(), rect.center().y(), CYAN)
-    assert near(scene.board.left(), scene.board.top(), CYAN)
+        c = img.pixelColor(round(rect.left() + rect.width() * 0.15), round(rect.center().y()))
+        assert c.alpha() > 200 and c.lightnessF() < 0.3, "ghost tiles are dark glass"
+    assert near(scene.board.left(), scene.board.top(), [CYAN]), "board bracket in the accent"
     if scene.rack is not None:
-        assert near(scene.rack.left() - 6, scene.rack.center().y(), GREEN)
+        assert near(scene.rack.left() - 6, scene.rack.center().y(), [GREEN, AMBER])
+    assert scene.rank == session.selected + 1 and scene.total == min(3, len(snap.result.moves))
+    session.stop()
+
+
+def test_overlay_marks_only_the_play_never_the_tiles_it_read(qapp, calibration, tmp_path):
+    from tilelens.ui.glass import OverlayScene
+
+    session, game, frame = make_session(qapp, calibration, tmp_path)
+    snap = run_until(qapp, session, {Status.READY})
+    assert snap.status == Status.READY, snap.detail
+    scene = session.overlay_scene()
+    assert not hasattr(scene, "seen") and scene.occupied is not None
+    h, w = frame["img"].shape[:2]
+    mapper = session.overlay_mapper()
+    play = {(t.row, t.col) for t in scene.move.tiles}
+    taken = [
+        (r, c)
+        for r in range(game.profile.height)
+        for c in range(game.profile.width)
+        if scene.occupied(r, c) and (r, c) not in play
+    ]
+    assert taken, "the fixture board has tiles"
+    # guides off: only the play is drawn, and no square the game already shows is marked
+    img = painted(scene, w, h, guides=0.0)
+    for r, c in taken:
+        inner = mapper.rect(r, c, 0.3)
+        for x in range(int(inner.left()), int(inner.right()) + 1, 2):
+            for y in range(int(inner.top()), int(inner.bottom()) + 1, 2):
+                assert img.pixelColor(x, y).alpha() == 0, f"square {r},{c} was marked"
+    # no play, no guides, nothing asked: the window has nothing to draw at all
+    bare = OverlayScene(board=scene.board, rack=scene.rack, rack_read=scene.rack_read)
+    blank = painted(bare, w, h, guides=0.0)
+    assert not any(blank.pixelColor(x, y).alpha() for x in range(0, w, 3) for y in range(0, h, 3))
+    # and with the guides up, nothing is the pink the old recognition outline used
+    img = painted(scene, w, h, guides=1.0)
+    for x in range(0, w, 2):
+        for y in range(0, h, 2):
+            c = img.pixelColor(x, y)
+            assert not (c.alpha() > 60 and 285 <= c.hue() <= 335 and c.saturation() > 120)
     session.stop()
 
 
@@ -373,24 +422,16 @@ def test_glass_panel_cards_and_states(qapp, calibration, tmp_path):
     assert panel.updated.text() == "Updated just now"
     got = []
     panel.card_clicked.connect(got.append)
-    ev = QMouseEvent(
-        QMouseEvent.Type.MouseButtonPress,
-        QPointF(5, 5),
-        QPointF(5, 5),
-        Qt.MouseButton.LeftButton,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
-    panel.cards[2].mousePressEvent(ev)
+    panel.cards[2].click()
     assert got == [2]
     from dataclasses import replace
 
     partial = replace(snap, coverage=Coverage.PARTIAL)
     panel.show_snapshot(partial, 0)
-    assert "in view" in panel.subtitle.text() and "Zoom out" in panel.message.text()
+    assert "in view" in panel.subtitle.text() and "Zoom out" in panel.banner.label.text()
     panel.show_snapshot(Snapshot(Status.CHECK, "2 squares to check"), 0)
-    assert not panel.check_btn.isHidden()
+    assert not panel.banner.isHidden() and panel.banner.action.text() == "Check tiles"
     assert all(c.move_shown is None for c in panel.cards)
-    assert "CHECK" in panel.live.text()
+    assert panel.pill.text() == "Check tiles"
     panel.close()
     session.stop()

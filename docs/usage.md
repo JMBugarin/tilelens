@@ -5,7 +5,8 @@
    to calibrate: TileLens finds the board, reads the rack and learns the game's look from the
    first screen it sees, and the control window steps out of the way.
 2. Play. The panel shows **Tracking** and the top three plays. The first play is previewed on
-   the board; click another card to preview that one instead.
+   the board as dark glass tiles with its score; click another card to preview that one
+   instead. Nothing marks the tiles TileLens has read.
 3. **Click a card to place it.** The ghost tiles freeze (the panel says **Holding**) so you can
    lay your tiles over them. When your rack is full again with new letters, TileLens reads it
    and resumes by itself. Click the card again, or **Resume tracking**, to let go early.
@@ -26,9 +27,12 @@ The panel states and what to do:
 | Paused | You paused tracking | Press Resume |
 
 An unsure tile does not stop the cards: the panel says which tile and shows its best letters as
-buttons, and one tap teaches TileLens that tile for good. **Calibrate** re-learns the game from
+buttons, and one tap teaches TileLens that tile for good. The **...** menu in the panel has
+Pause, Rescan, Check tiles, Calibrate and Settings. **Calibrate** re-learns the game from
 the screen without typing; only if the rack cannot be read does it open a dialog with the best
-guess filled in. The ⚙ button opens the settings window, which is also in the menu bar.
+guess filled in. Settings (also in the menu bar) holds the overlay mode, alignment guides,
+light or dark appearance, reduce motion, the word list and the shortcuts; the first run shows
+a short checklist instead.
 
 ![The fallback calibration dialog on a Letter League screen, with the rack already read](images/calibrate.png)
 

@@ -18,19 +18,23 @@ def _glass_inset(panel) -> int:
 
 
 def _scene(snap: str, selected: int = 0, move: int | None = 0, **scene):
+    """The overlay and the panel placed the way the session places them: beside the board."""
+    from tilelens.ui.panel_placement import panel_scale
+
     panel = ctx.make_panel(ctx.snapshot(snap), selected=selected, framed=scene.get("framed", False))
-    panel.ensurePolished()
-    panel.adjustSize()
-    bleed = _glass_inset(panel)
     base = ctx.scenario()
-    # the game's own background is extended on the right until the panel sits beside the board
-    need = base.board_rect.right() + GAP + (panel.width() - 2 * bleed) + ctx.PANEL_INSET[0]
+    panel.set_scale(panel_scale(base.size_pt[1]))
+    panel.ensurePolished()
+    glass_w, glass_h = panel.glass_size()
+    # the game's own background is extended on the right until the panel fits beside the board
+    need = base.board_rect.right() + GAP + glass_w + ctx.PANEL_INSET[0]
     wide = max(0, math.ceil((need - base.size_pt[0]) / 8) * 8)
     sc = ctx.scenario(wide)
+    screen = (0, 0, sc.size_pt[0], max(sc.size_pt[1], glass_h + 2 * GAP))
+    found = panel.auto_place(sc.region, sc.board_rect, sc.rack_rect, screen_rect=screen)
     overlay = ctx.make_overlay(ctx.overlay_scene(move=move, wide_pt=wide, **scene))
-    x = sc.region.x + sc.region.width - (panel.width() - bleed) - ctx.PANEL_INSET[0]
-    y = sc.region.y + ctx.PANEL_INSET[1] - bleed
-    return ctx.stage(sc.size_pt, (overlay, (0, 0), sc.size_pt), (panel, (x, y)))
+    assert found.overlap == 0, f"the panel would cover the board ({found})"
+    return ctx.stage(sc.size_pt, (overlay, (0, 0), sc.size_pt), (panel, (panel.x(), panel.y())))
 
 
 @register("scene/play", kind="overlay")
@@ -54,10 +58,10 @@ def held():
 @register("scene/partial", kind="overlay")
 def partial():
     """Part of the board hidden: dashed frame and a note in the panel"""
-    return _scene("ready-partial", coverage=Coverage.PARTIAL)
+    return _scene("ready-partial", coverage=Coverage.PARTIAL, guide_alpha=1.0)
 
 
 @register("scene/unsure", kind="overlay")
 def unsure():
     """An unclear rack tile: the panel asks, the rack outline turns amber"""
-    return _scene("unsure-rack", rack_read=(6, 7))
+    return _scene("unsure-rack", rack_read=(6, 7), guide_alpha=1.0, asking=True)

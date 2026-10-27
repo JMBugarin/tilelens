@@ -7,7 +7,7 @@
 
 ![TileLens over Discord's Letter League: confirmed rack, ghost tiles for the selected play and the top three placements](docs/images/discord-tracking.png)
 
-*Rack outlined green once every tile is read, selected play previewed as dashed ghost tiles, top three plays ranked by points. The player's name is blurred.*
+*The previous interface: the selected play previewed over the board and the top three plays ranked by points. The player's name is blurred. The interface has since been redesigned as translucent glass, described in [docs/design-system.md](docs/design-system.md); new captures follow.*
 
 > A side project for experimenting with computer vision and word search, not for competitive or ranked play (assistance tools can get accounts banned). It never clicks or places anything, and is not affiliated with any game or company.
 
@@ -42,15 +42,19 @@
 5. **Search.** A word graph (DAWG) search runs in a separate process. It finds every legal
    placement and keeps the top three by total score, premiums and crossing words included. A
    result is shown only while the board on screen is still the position it was computed for.
-6. **Preview.** A click-through overlay draws the selected placement as ghost tiles. Clicking
-   a card in the panel holds that play still while you place your tiles, and tracking resumes
-   by itself when your rack refills. The overlay and the panel are hidden from screen capture.
+6. **Preview.** A click-through overlay draws the selected placement as smoked-glass ghost
+   tiles with one score tag, and marks nothing else: tiles that were read are never
+   highlighted. Alignment guides flash when the board is found and stay only while something
+   needs attention. The results panel floats beside the board, never over it. Clicking a card
+   in the panel (or Ctrl+Shift+1, 2, 3 while a TileLens window is in front) holds that play
+   still while you place your tiles, and tracking resumes by itself when your rack refills.
+   The overlay, the panel and every other TileLens window are hidden from screen capture.
 
 "Highest scoring" means the search finished; "best found so far" means it was cut short. A
 result is only as exact as the board, rack, profile and word list it was given.
 
 More detail: [vision](docs/vision.md), [live loop](docs/live-loop.md),
-[panel and overlay](docs/overlay.md).
+[panel and overlay](docs/overlay.md), [design system](docs/design-system.md).
 
 ## Install
 
@@ -68,7 +72,9 @@ uv run tilelens
 uv run tilelens demo
 ```
 
-That opens a self-playing fake game window next to the panel and needs no permissions.
+That opens a self-playing fake game window next to the panel and needs no permissions. The
+first run shows a short checklist; the settings window sets light or dark, reduce motion,
+alignment guides and the overlay mode.
 
 ### Screen Recording permission
 

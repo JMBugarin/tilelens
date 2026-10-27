@@ -89,11 +89,16 @@ def test_register_rejects_bad_names_and_duplicates(gallery):
 
 
 def test_a_run_deletes_the_windows_it_built(gallery, tmp_path):
+    import gc
+
     from PySide6.QtWidgets import QApplication
 
     run, _ = gallery
+    gc.collect()
+    before = len(QApplication.allWidgets())
     run.main(run_args(tmp_path, "window/main-ready", "panel/no-move"))
-    assert len(QApplication.allWidgets()) == 0
+    gc.collect()
+    assert len(QApplication.allWidgets()) <= before
 
 
 def test_an_exception_inside_a_qt_callback_fails_the_state(gallery, tmp_path):

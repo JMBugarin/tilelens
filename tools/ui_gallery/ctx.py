@@ -383,6 +383,11 @@ def demo_snapshot(status: Status = Status.READY, detail: str = "", **changes) ->
 # overlay scenes
 
 
+def _last_rack_tile(rack: QRectF) -> QRectF:
+    side = rack.height()
+    return QRectF(rack.right() - side, rack.top(), side, side)
+
+
 def overlay_scene(
     *,
     move: int | None = 0,
@@ -393,10 +398,24 @@ def overlay_scene(
     rack_read: tuple[int, int] = (7, 7),
     wide_pt: int = 0,
     moves: list | None = None,
+    guide_alpha: float | None = 0.0,
+    asking: bool = False,
 ) -> OverlayScene:
-    """What the overlay draws on the real frame, from the same geometry the session uses."""
+    """What the overlay draws on the real frame, from the same geometry the session uses.
+
+    guide_alpha 0 shows the steady state while a play is on show, 1 the moment the guides flash.
+    """
     sc = scenario(wide_pt)
     chosen = moves if moves is not None else featured_moves()
+    cells = sc.reading.cells
+    rows, cols = len(cells), len(cells[0])
+
+    def occupied(row: int, col: int) -> bool:
+        if not (0 <= row < rows and 0 <= col < cols):
+            return False
+        cell = cells[row][col]
+        return bool(cell.letter or cell.blank or cell.uncertain)
+
     return OverlayScene(
         move=None if move is None else chosen[move],
         rect_of=sc.mapper.rect,
@@ -406,6 +425,11 @@ def overlay_scene(
         rack_read=rack_read if rack else None,
         value_of=sc.profile.tile_value,
         framed=framed,
+        rank=None if move is None else move + 1,
+        total=None if move is None else min(3, len(chosen)),
+        guide_alpha=guide_alpha,
+        occupied=occupied,
+        asking=(_last_rack_tile(sc.rack_rect),) if asking and rack else (),
     )
 
 

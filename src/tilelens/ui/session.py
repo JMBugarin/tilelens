@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QObject, QRectF, QTimer, Signal
+from PySide6.QtCore import QObject, QPoint, QRectF, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 
 from tilelens.capture.source import PermissionGate, ScreenSource
@@ -17,13 +17,20 @@ from tilelens.rules.lexicon import Lexicon, WordListError, lexicon_for
 from tilelens.rules.profile import Profile, ProfileError, demo_profile_dir, load_profile
 from tilelens.state.controller import LiveController, Snapshot, Status
 from tilelens.state.worker import InlineSolver, ProcessSolver
+from tilelens.ui import notify
+from tilelens.ui.design import Appearance
 from tilelens.ui.glass import OverlayScene
+from tilelens.ui.glass_dialog import GlassDialog
 from tilelens.ui.glass_panel import GlassPanel
 from tilelens.ui.overlay import OverlayWindow
 from tilelens.ui.preview import CellMapper
 from tilelens.ui.settings import Settings
 from tilelens.vision.autoread import NeedsLetters, ViewReader, calibrate_unaided
 from tilelens.vision.recognizer import Calibration, CalibrationError, Recognizer
+
+BACKDROP_EVERY = 1.0
+PANEL_SAVE_MS = 600
+VISIBLE_PLAYS = 3
 
 
 class SuppressingSource:
@@ -45,6 +52,7 @@ class LiveSession(QObject):
     updated = Signal(object)
     message = Signal(str)
     selection_changed = Signal(int)
+    settings_changed = Signal(str)
 
     def __init__(
         self,
@@ -55,6 +63,7 @@ class LiveSession(QObject):
         use_process: bool = True,
         overlay: OverlayWindow | None = None,
         panel: GlassPanel | None = None,
+        appearance: Appearance | None = None,
     ):
         super().__init__()
         self.settings = settings
@@ -76,7 +85,20 @@ class LiveSession(QObject):
         self.panel.rescan_clicked.connect(self.rescan)
         self.panel.release_clicked.connect(self.release_hold)
         self.panel.chip_clicked.connect(self.confirm_tile)
+        self.panel.moved_by_user.connect(self._panel_moved)
+        self.panel.position_reset.connect(self._panel_reset)
+        self.panel.compact_changed.connect(self._compact_changed)
+        self.panel.set_compact(settings.panel_compact)
+        self.panel.set_shortcuts(settings.shortcuts)
         self.preview_hidden = False
+        self._appearance: Appearance | None = None
+        self._sampled_at = 0.0
+        self._outline: tuple[QRectF | None, QRectF | None] | None = None
+        self._capture_mode: str | None = None
+        self._offset_timer = QTimer(self)
+        self._offset_timer.setSingleShot(True)
+        self._offset_timer.setInterval(PANEL_SAVE_MS)
+        self._offset_timer.timeout.connect(lambda: self.settings_changed.emit("panel_offset"))
         self._grid_key = None
         self._saved_at = 0.0
         self._words_seen = None
@@ -94,6 +116,82 @@ class LiveSession(QObject):
             app.screenRemoved.connect(self._screens_changed)
             for screen in app.screens():
                 self._watch_screen(screen)
+        if appearance is not None:
+            self.appearance = appearance
+
+    # appearance
+
+    @property
+    def appearance(self) -> Appearance | None:
+        return self._appearance
+
+    @appearance.setter
+    def appearance(self, value: Appearance | None) -> None:
+        self._appearance = value
+        if value is not None:
+            self.panel.bind_appearance(value)
+            self.overlay.bind(value)
+
+    def _sample_backdrop(self) -> None:
+        """Tell the appearance how bright and busy the game is behind the panel, once a second."""
+        appearance, ctrl = self._appearance, self.controller
+        if appearance is None or ctrl is None or ctrl.last_frame is None:
+            return
+        now = time.monotonic()
+        if now - self._sampled_at < BACKDROP_EVERY:
+            return
+        self._sampled_at = now
+        region = self.region_provider()
+        if region is None or region.width <= 0 or region.height <= 0 or not self.panel.isVisible():
+            return
+        frame = ctrl.last_frame
+        fh, fw = frame.shape[:2]
+        sx, sy = fw / region.width, fh / region.height
+        glass = self.panel.glass_geometry()
+        x0, y0 = (glass.left() - region.x) * sx, (glass.top() - region.y) * sy
+        x1, y1 = x0 + glass.width() * sx, y0 + glass.height() * sy
+        seen = max(0.0, min(x1, fw) - max(x0, 0.0)) * max(0.0, min(y1, fh) - max(y0, 0.0))
+        if seen < 0.25 * max(1.0, (x1 - x0) * (y1 - y0)):
+            return
+        appearance.sample(frame, (round(x0), round(y0), round(x1 - x0), round(y1 - y0)))
+
+    # windows
+
+    def _exclusion_wanted(self) -> bool:
+        return self.settings.overlay_mode == "exclude" and not os.environ.get(
+            "TILELENS_SCREENSHOT_MODE"
+        )
+
+    def _shown(self, win_id: int) -> None:
+        """Every window of ours, each time it appears: over the game on every Space and, when
+        the overlay mode says so, out of the screen capture. Runs before the blur is asked."""
+        adapter = self.adapter
+        if adapter is None:
+            return
+        adapter.show_on_all_spaces(win_id)
+        if self._exclusion_wanted():
+            adapter.exclude_from_capture(win_id)
+
+    def _install_window_hooks(self) -> None:
+        for window in (self.overlay, self.panel):
+            window.on_shown = self._shown
+        notify.manager().on_shown = self._shown
+        GlassDialog.on_shown = self._shown
+
+    def _apply_capture_mode(self) -> None:
+        mode = self.settings.overlay_mode
+        if mode == self._capture_mode:
+            return
+        self._capture_mode = mode
+        if self.adapter is not None and self._exclusion_wanted():
+            for window in (self.overlay, self.panel):
+                if window.isVisible():
+                    self.adapter.exclude_from_capture(int(window.winId()))
+
+    def toast(self, text: str, kind: str = "success", ms: int = 2500) -> None:
+        """A confirmation that leaves by itself, under the panel so the board stays clear."""
+        anchor = ("below", self.panel.glass_geometry()) if self.panel.isVisible() else None
+        notify.show(text, kind, ms, anchor)
 
     # setup
 
@@ -176,16 +274,23 @@ class LiveSession(QObject):
         self.note("")
         return True
 
+    def setup_state(self) -> tuple[bool | None, bool | None, bool | None]:
+        """Screen capture allowed, word list loaded, game learned: True done, False a problem,
+        None still to do."""
+        permission = self.adapter.screen_permission() if self.adapter is not None else True
+        return (
+            None if permission is None else bool(permission),
+            self.lexicon is not None,
+            True if self.recognizer is not None else None,
+        )
+
     def show_setup_panel(self) -> None:
+        self._install_window_hooks()
         self.panel.show_snapshot(None, 0)
-        region = self.region_provider()
-        if region is not None and not self.panel.user_moved:
-            self.panel.move(region.x + region.width - self.panel.width() - 24, region.y + 72)
-        if self.adapter is not None:
-            self.panel.on_shown = self.adapter.show_on_all_spaces
+        self.panel.set_setup(*self.setup_state())
+        self._place_panel()
         self.panel.show()
-        if self.adapter is not None:
-            self.adapter.show_on_all_spaces(int(self.panel.winId()))
+        self._shown(int(self.panel.winId()))
 
     def note(self, text: str) -> None:
         self.panel.set_note(text)
@@ -288,21 +393,17 @@ class LiveSession(QObject):
         )
         self.controller.on_misaligned = self._clear_preview
         self.controller.on_event = self._log_event
+        self._install_window_hooks()
         if self.adapter is not None:
             # stay over the game, on every Space, also after another app is clicked
             for window in (self.overlay, self.panel):
-                window.on_shown = self.adapter.show_on_all_spaces
                 self.adapter.show_on_all_spaces(int(window.winId()))
         if self.settings.overlay_mode == "exclude" and self.adapter is not None:
             region = self.region_provider()
             if region:
                 self.overlay.place(region)
+            self._place_panel()
             self.panel.show()
-            self.adapter.show_on_all_spaces(int(self.panel.winId()))
-            if os.environ.get("TILELENS_SCREENSHOT_MODE"):
-                pass  # windows stay visible to screenshots; TileLens never reads its own windows
-            else:
-                self.adapter.exclude_from_capture(int(self.panel.winId()))
             if not os.environ.get("TILELENS_SCREENSHOT_MODE") and (
                 not self.overlay.try_exclude_from_capture(self.adapter)
             ):
@@ -322,6 +423,7 @@ class LiveSession(QObject):
             self.solver.close()
             self.solver = None
         self.controller = None
+        self._outline = None
         self.overlay.clear()
         self.overlay.hide()
         try:
@@ -342,6 +444,12 @@ class LiveSession(QObject):
         if self.solver is not None:
             self.solver.close()
             self.solver = None
+        self._offset_timer.stop()
+        manager = notify.manager()
+        if getattr(manager.on_shown, "__self__", None) is self:
+            manager.on_shown = None
+        if getattr(GlassDialog.on_shown, "__self__", None) is self:
+            GlassDialog.on_shown = None
         self.overlay.close()
         self.panel.close()
         if self.adapter is not None:
@@ -353,6 +461,7 @@ class LiveSession(QObject):
         if self.controller is None:
             return
         self.controller.tick()
+        self._sample_backdrop()
         self._check_values()
         self._check_words()
         self._save_learning()
@@ -389,7 +498,7 @@ class LiveSession(QObject):
         if ctrl.hold is None:
             ctrl.rescan()
         text = ", ".join(f"{k}={v}" for k, v in sorted(learned.items()))
-        self.message.emit(f"Learned tile values from the game: {text}")
+        self.toast(f"Learned tile values from the game: {text}")
 
     def _save_learning(self) -> None:
         """Keep what was learned from play (letter shapes, tile colors) across restarts."""
@@ -458,7 +567,7 @@ class LiveSession(QObject):
         ctrl.cache.clear()  # results made under the old words are never shown again
         ctrl.rescan()
         ctrl.event(f"words changed: now {self.lexicon.version}")
-        self.message.emit("Word list or overrides changed: suggestions refreshed")
+        self.toast("Word list changed. Suggestions refreshed.")
 
     def _check_values(self) -> None:
         reader = self.recognizer
@@ -541,6 +650,8 @@ class LiveSession(QObject):
         places the tiles; clicking the held card again lets go."""
         ctrl = self.controller
         if ctrl is not None:
+            if not self._playable(index):
+                return
             if ctrl.hold is not None and ctrl.hold.index == index and self.selected == index:
                 ctrl.release_hold()
                 self.refresh_overlay()
@@ -554,6 +665,13 @@ class LiveSession(QObject):
         self.refresh_overlay()
         self.selection_changed.emit(index)
 
+    def _playable(self, index: int) -> bool:
+        """A shortcut or click can name a play that is not on show; that changes nothing."""
+        snap = self.snapshot
+        if snap is None or snap.result is None or snap.status != Status.READY:
+            return True
+        return 0 <= index < min(VISIBLE_PLAYS, len(snap.result.moves))
+
     def release_hold(self) -> None:
         if self.controller is not None:
             self.controller.release_hold()
@@ -566,7 +684,8 @@ class LiveSession(QObject):
     def next_card(self) -> None:
         snap = self.snapshot
         if snap and snap.result and snap.result.moves:
-            self.select((self.selected + 1) % len(snap.result.moves), hold=False)
+            shown = min(VISIBLE_PLAYS, len(snap.result.moves))
+            self.select((self.selected + 1) % shown, hold=False)
 
     @property
     def snapshot(self) -> Snapshot | None:
@@ -592,16 +711,11 @@ class LiveSession(QObject):
         view = getattr(reading, "view", None)
         return view is not None and view.full
 
-    def overlay_scene(self) -> OverlayScene:
-        """Board frame, rack outline and ghost tiles for the newest reading, in overlay points."""
-        ctrl, snap = self.controller, self.snapshot
-        region = self.region_provider()
-        mapper = self.overlay_mapper()
-        if ctrl is None or snap is None or region is None or mapper is None:
-            return OverlayScene()
-        reading = ctrl.last_reading
-        if snap.status in (Status.PAUSED, Status.NOT_VISIBLE) or reading is None:
-            return OverlayScene()
+    def _outlines(
+        self, mapper: CellMapper, reading, region: Region
+    ) -> tuple[QRectF, QRectF | None]:
+        """The visible board and the rack, in overlay points."""
+        ctrl = self.controller
         view = getattr(reading, "view", None)
         if view is not None and view.visible.any():
             rows, cols = np.nonzero(view.visible)
@@ -619,8 +733,55 @@ class LiveSession(QObject):
             x1 = max(x + w for x, _, w, _ in rects)
             y1 = max(y + h for _, y, _, h in rects)
             rack = QRectF(x0 * sx, y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy)
+        return board, rack
+
+    def _asking(self, snap: Snapshot, mapper: CellMapper, reading, region: Region):
+        """The one tile the panel asks about, as a rectangle; nothing while a play is held."""
+        if snap.held is not None or not snap.unsure or snap.result is None:
+            return ()
+        kind, where = snap.unsure[0][0], snap.unsure[0][1]
+        if kind == "cell":
+            return (mapper.rect(where[0], where[1], 0.03),)
+        if kind == "rack" and 0 <= where < len(reading.rack) and reading.rack[where].rect:
+            fw, fh = self.controller.last_frame_size
+            x, y, w, h = reading.rack[where].rect
+            sx, sy = region.width / fw, region.height / fh
+            return (QRectF(x * sx, y * sy, w * sx, h * sy),)
+        return ()
+
+    @staticmethod
+    def _occupied(reading) -> Callable[[int, int], bool]:
+        cells = reading.cells
+        rows = len(cells)
+        cols = len(cells[0]) if rows else 0
+
+        def occupied(row: int, col: int) -> bool:
+            if not (0 <= row < rows and 0 <= col < cols):
+                return False
+            cell = cells[row][col]
+            return bool(cell.letter or cell.blank or cell.uncertain)
+
+        return occupied
+
+    def overlay_scene(self) -> OverlayScene:
+        """The suggested play, the guides and the rack outline for the newest reading, in
+        overlay points. Nothing here marks tiles that were read."""
+        ctrl, snap = self.controller, self.snapshot
+        region = self.region_provider()
+        mapper = self.overlay_mapper()
+        if ctrl is None or snap is None or region is None or mapper is None:
+            return OverlayScene()
+        reading = ctrl.last_reading
+        if snap.status in (Status.PAUSED, Status.NOT_VISIBLE) or reading is None:
+            return OverlayScene()
+        board, rack = self._outlines(mapper, reading, region)
         known = sum(1 for t in reading.rack if not t.uncertain and (t.letter or t.blank))
         move = None if self.preview_hidden else self.selected_move()
+        total = None
+        if move is not None and snap.result is not None:
+            total = min(VISIBLE_PLAYS, len(snap.result.moves))
+        steps = (round(v / 8) for v in (board.x(), board.y(), board.width(), board.height()))
+        lock = (region.width, region.height, *steps)
         return OverlayScene(
             move=move,
             rect_of=mapper.rect,
@@ -630,6 +791,12 @@ class LiveSession(QObject):
             rack_read=(known, len(reading.rack)),
             value_of=self.profile.tile_value,
             framed=self.board_framed(),
+            rank=None if move is None else self.selected + 1,
+            total=total,
+            asking=self._asking(snap, mapper, reading, region),
+            guides_mode=self.settings.guides,
+            lock=lock,
+            occupied=self._occupied(reading),
         )
 
     def _log_event(self, text: str) -> None:
@@ -653,6 +820,7 @@ class LiveSession(QObject):
 
     def refresh_overlay(self, snap: Snapshot | None = None) -> None:
         self.refresh_panel()
+        self._apply_capture_mode()
         if self.settings.overlay_mode == "panel_only":
             self.overlay.clear()
             self.overlay.hide()
@@ -675,17 +843,68 @@ class LiveSession(QObject):
         if self.settings.overlay_mode == "panel_only" or self.controller is None:
             panel.hide()
             return
+        panel.set_compact(self.settings.panel_compact)
         snap = self.snapshot
         age = None
         if snap is not None and snap.published_at is not None and snap.status == Status.READY:
             age = self.controller.clock() - snap.published_at
         panel.show_snapshot(snap, self.selected, age, self.board_framed())
-        if not panel.user_moved:
-            region = self.region_provider()
-            if region is not None:
-                panel.move(region.x + region.width - panel.width() - 24, region.y + 72)
+        if snap is None:
+            panel.set_setup(*self.setup_state())
+        self._place_panel()
         if not panel.isVisible():
             panel.show()
+            self._place_panel()
+
+    def _placement_rects(self, region: Region) -> tuple[QRectF | None, QRectF | None]:
+        """Board and rack in screen points. They stay at the last place they were seen while
+        the game is paused or out of view, so the panel does not jump."""
+        ctrl = self.controller
+        mapper = self.overlay_mapper()
+        reading = ctrl.last_reading if ctrl is not None else None
+        if mapper is not None and reading is not None:
+            self._outline = self._outlines(mapper, reading, region)
+        board, rack = self._outline or (None, None)
+        return (
+            None if board is None else board.translated(region.x, region.y),
+            None if rack is None else rack.translated(region.x, region.y),
+        )
+
+    def _place_panel(self) -> None:
+        """Beside the board, or where the player put it (stored relative to the region)."""
+        region = self.region_provider()
+        if region is None:
+            return
+        offset = self.settings.panel_offset
+        if offset is not None:
+            want = QPoint(region.x + offset["x"], region.y + offset["y"])
+            if self.panel.user_position != want:
+                self.panel.set_user_position(want)
+        board, rack = self._placement_rects(region)
+        self.panel.auto_place(region, board, rack)
+
+    def _panel_moved(self, glass_top_left: QPoint) -> None:
+        region = self.region_provider()
+        if region is None:
+            return
+        self.settings.panel_offset = {
+            "x": round(glass_top_left.x() - region.x),
+            "y": round(glass_top_left.y() - region.y),
+        }
+        self._offset_timer.start()
+
+    def _panel_reset(self) -> None:
+        self.settings.panel_offset = None
+        self._offset_timer.stop()
+        self.settings_changed.emit("panel_offset")
+        self.refresh_panel()
+
+    def _compact_changed(self, compact: bool) -> None:
+        if self.settings.panel_compact == compact:
+            return
+        self.settings.panel_compact = compact
+        self.settings_changed.emit("panel_compact")
+        self.refresh_panel()
 
 
 class _NullSource:
