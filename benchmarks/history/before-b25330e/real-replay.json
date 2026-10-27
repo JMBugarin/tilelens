@@ -1,0 +1,473 @@
+{
+  "hardware": {
+    "machine": "arm64",
+    "cpu": "Apple M5 Pro",
+    "memory_gb": 24.0,
+    "os": "macOS-26.6-arm64-arm-64bit-Mach-O",
+    "python": "3.13.16"
+  },
+  "data": "real frames; labels by eye",
+  "cases": [
+    {
+      "id": "discord-board-turn4",
+      "kind": "board",
+      "scenario": "early game, 3 words, 1 blank, top rows hidden behind the game's timer panel",
+      "results": [
+        {
+          "scale": 0.5,
+          "frame_px": [
+            928,
+            614
+          ],
+          "derived_from_real_frame": true,
+          "cold_read_ms": 439.3,
+          "warm_read": {
+            "n": 15,
+            "median_ms": 15.1,
+            "p95_ms": 31.83,
+            "worst_ms": 31.83
+          },
+          "locates_over_run": 1,
+          "first_frame": {
+            "labelled": 18,
+            "exact": 14,
+            "wrong_letter": 4,
+            "wrong_but_flagged": 4,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 0,
+            "values_correct": 0,
+            "mistakes": [
+              "flagged C->C at (9, 13)",
+              "flagged D->D at (10, 14)",
+              "flagged N->N at (11, 17)",
+              "flagged U->U at (11, 20)"
+            ]
+          },
+          "raw": {
+            "labelled": 18,
+            "exact": 14,
+            "wrong_letter": 4,
+            "wrong_but_flagged": 4,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 0,
+            "values_correct": 0,
+            "mistakes": [
+              "flagged C->C at (9, 13)",
+              "flagged D->D at (10, 14)",
+              "flagged N->N at (11, 17)",
+              "flagged U->U at (11, 20)"
+            ]
+          },
+          "after_app_cleanup": {
+            "labelled": 18,
+            "exact": 14,
+            "wrong_letter": 4,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 4,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 0,
+            "values_correct": 0,
+            "mistakes": [
+              "SILENT C->C at (9, 13)",
+              "SILENT D->D at (10, 14)",
+              "SILENT N->N at (11, 17)",
+              "SILENT U->U at (11, 20)"
+            ]
+          },
+          "isolated_tiles_dropped": 0,
+          "uncertain_cells": 0
+        },
+        {
+          "scale": 0.65,
+          "frame_px": [
+            1206,
+            798
+          ],
+          "derived_from_real_frame": true,
+          "cold_read_ms": 549.1,
+          "warm_read": {
+            "n": 15,
+            "median_ms": 18.23,
+            "p95_ms": 19.84,
+            "worst_ms": 19.84
+          },
+          "locates_over_run": 1,
+          "first_frame": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 0,
+            "values_correct": 0,
+            "mistakes": []
+          },
+          "raw": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 0,
+            "values_correct": 0,
+            "mistakes": []
+          },
+          "after_app_cleanup": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 0,
+            "values_correct": 0,
+            "mistakes": []
+          },
+          "isolated_tiles_dropped": 0,
+          "uncertain_cells": 0
+        },
+        {
+          "scale": 0.8,
+          "frame_px": [
+            1485,
+            982
+          ],
+          "derived_from_real_frame": true,
+          "cold_read_ms": 540.4,
+          "warm_read": {
+            "n": 15,
+            "median_ms": 22.16,
+            "p95_ms": 23.78,
+            "worst_ms": 23.78
+          },
+          "locates_over_run": 1,
+          "first_frame": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 0,
+            "values_correct": 0,
+            "mistakes": []
+          },
+          "raw": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 0,
+            "values_correct": 0,
+            "mistakes": []
+          },
+          "after_app_cleanup": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 0,
+            "values_correct": 0,
+            "mistakes": []
+          },
+          "isolated_tiles_dropped": 0,
+          "uncertain_cells": 0
+        },
+        {
+          "scale": 1.0,
+          "frame_px": [
+            1856,
+            1228
+          ],
+          "derived_from_real_frame": false,
+          "cold_read_ms": 566.9,
+          "warm_read": {
+            "n": 15,
+            "median_ms": 30.6,
+            "p95_ms": 32.46,
+            "worst_ms": 32.46
+          },
+          "locates_over_run": 1,
+          "first_frame": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 0,
+            "values_correct": 0,
+            "mistakes": []
+          },
+          "raw": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 0,
+            "values_correct": 0,
+            "mistakes": []
+          },
+          "after_app_cleanup": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 0,
+            "values_correct": 0,
+            "mistakes": []
+          },
+          "isolated_tiles_dropped": 0,
+          "uncertain_cells": 0
+        },
+        {
+          "scale": 1.25,
+          "frame_px": [
+            2320,
+            1535
+          ],
+          "derived_from_real_frame": true,
+          "cold_read_ms": 590.2,
+          "warm_read": {
+            "n": 15,
+            "median_ms": 40.29,
+            "p95_ms": 47.03,
+            "worst_ms": 47.03
+          },
+          "locates_over_run": 1,
+          "first_frame": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 7,
+            "values_correct": 6,
+            "mistakes": []
+          },
+          "raw": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 7,
+            "values_correct": 6,
+            "mistakes": []
+          },
+          "after_app_cleanup": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 7,
+            "values_correct": 6,
+            "mistakes": []
+          },
+          "isolated_tiles_dropped": 0,
+          "uncertain_cells": 0
+        },
+        {
+          "scale": 1.5,
+          "frame_px": [
+            2784,
+            1842
+          ],
+          "derived_from_real_frame": true,
+          "cold_read_ms": 584.8,
+          "warm_read": {
+            "n": 15,
+            "median_ms": 53.79,
+            "p95_ms": 61.64,
+            "worst_ms": 61.64
+          },
+          "locates_over_run": 1,
+          "first_frame": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 7,
+            "values_correct": 6,
+            "mistakes": []
+          },
+          "raw": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 7,
+            "values_correct": 6,
+            "mistakes": []
+          },
+          "after_app_cleanup": {
+            "labelled": 18,
+            "exact": 18,
+            "wrong_letter": 0,
+            "wrong_but_flagged": 0,
+            "wrong_silent": 0,
+            "missed": 0,
+            "false_detections": 0,
+            "values_read": 7,
+            "values_correct": 6,
+            "mistakes": []
+          },
+          "isolated_tiles_dropped": 0,
+          "uncertain_cells": 0
+        }
+      ]
+    },
+    {
+      "id": "discord-board-turn4",
+      "kind": "moves-on-real-board",
+      "racks_are_synthetic": true,
+      "word_list": "/Users/josh/Library/Application Support/tilelens/words/enable1.txt",
+      "word_count": 172823,
+      "racks": 40,
+      "empty_results": 0,
+      "moves_checked": 120,
+      "illegal": [],
+      "score_disagrees_with_rules_module": [],
+      "top3_differs_from_full_enumeration": 0,
+      "solve": {
+        "n": 40,
+        "median_ms": 12.11,
+        "p95_ms": 162.22,
+        "worst_ms": 171.55
+      },
+      "graph_build_s": 0.45,
+      "scoring_vs_game": "not measured: needs the game's own score before and after a play"
+    },
+    {
+      "id": "discord-rack-vpoknlj",
+      "kind": "rack",
+      "scenario": "rack of 7, no calibration",
+      "results": [
+        {
+          "scale": 0.5,
+          "tiles_found": 7,
+          "tiles_labelled": 7,
+          "letters_correct": 7,
+          "letters_named_with_confidence": 7,
+          "values_correct": 7,
+          "read_ms": 5.6,
+          "derived_from_real_frame": true
+        },
+        {
+          "scale": 0.65,
+          "tiles_found": 7,
+          "tiles_labelled": 7,
+          "letters_correct": 7,
+          "letters_named_with_confidence": 6,
+          "values_correct": 7,
+          "read_ms": 5.1,
+          "derived_from_real_frame": true
+        },
+        {
+          "scale": 0.8,
+          "tiles_found": 7,
+          "tiles_labelled": 7,
+          "letters_correct": 7,
+          "letters_named_with_confidence": 7,
+          "values_correct": 6,
+          "read_ms": 6.2,
+          "derived_from_real_frame": true
+        },
+        {
+          "scale": 1.0,
+          "tiles_found": 7,
+          "tiles_labelled": 7,
+          "letters_correct": 7,
+          "letters_named_with_confidence": 7,
+          "values_correct": 7,
+          "read_ms": 7.1,
+          "derived_from_real_frame": false
+        }
+      ]
+    },
+    {
+      "id": "discord-rack-vyeizae",
+      "kind": "rack",
+      "scenario": "rack of 7 with a two-digit value, no calibration",
+      "results": [
+        {
+          "scale": 0.5,
+          "tiles_found": 7,
+          "tiles_labelled": 7,
+          "letters_correct": 7,
+          "letters_named_with_confidence": 7,
+          "values_correct": 7,
+          "read_ms": 5.0,
+          "derived_from_real_frame": true
+        },
+        {
+          "scale": 0.65,
+          "tiles_found": 7,
+          "tiles_labelled": 7,
+          "letters_correct": 7,
+          "letters_named_with_confidence": 7,
+          "values_correct": 7,
+          "read_ms": 5.1,
+          "derived_from_real_frame": true
+        },
+        {
+          "scale": 0.8,
+          "tiles_found": 7,
+          "tiles_labelled": 7,
+          "letters_correct": 7,
+          "letters_named_with_confidence": 7,
+          "values_correct": 7,
+          "read_ms": 6.0,
+          "derived_from_real_frame": true
+        },
+        {
+          "scale": 1.0,
+          "tiles_found": 7,
+          "tiles_labelled": 7,
+          "letters_correct": 7,
+          "letters_named_with_confidence": 7,
+          "values_correct": 7,
+          "read_ms": 7.1,
+          "derived_from_real_frame": false
+        }
+      ]
+    }
+  ]
+}
