@@ -23,6 +23,21 @@ class Grid:
         h = self.pitch_y * (1 - 2 * inset)
         return (round(x), round(y), max(1, round(w)), max(1, round(h)))
 
+    def axes(self, rows: int | None = None, cols: int | None = None):
+        """Left edges of the columns, top edges of the rows and the size of a square: cell_rect."""
+        inset = 0.0
+        xs = [
+            round(self.x0 + c * self.pitch_x + inset * self.pitch_x)
+            for c in range(self.cols if cols is None else cols)
+        ]
+        ys = [
+            round(self.y0 + r * self.pitch_y + inset * self.pitch_y)
+            for r in range(self.rows if rows is None else rows)
+        ]
+        w = max(1, round(self.pitch_x * (1 - 2 * inset)))
+        h = max(1, round(self.pitch_y * (1 - 2 * inset)))
+        return xs, ys, w, h
+
     def cell_center(self, row: int, col: int) -> tuple[float, float]:
         return (self.x0 + (col + 0.5) * self.pitch_x, self.y0 + (row + 0.5) * self.pitch_y)
 

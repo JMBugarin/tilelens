@@ -95,36 +95,44 @@ def _layout_classes(profile: Profile, keys: list[str]) -> np.ndarray:
     return out
 
 
-def _cell_counts(integrals, xs, ys, pitch, inset):
+def _class_integral(cls: np.ndarray, n_classes: int) -> np.ndarray:
+    """Integral image with one channel per class: pixel counts of any box by four lookups."""
+    onehot = (cls[:, :, None] == np.arange(n_classes, dtype=cls.dtype)).astype(np.uint8)
+    return cv2.integral(onehot)
+
+
+def _cell_counts(integral, xs, ys, pitch, inset):
     """Per-class pixel counts in the inset box of every lattice cell."""
     xa = np.round(xs + inset * pitch).astype(int)
     xb = np.round(xs + (1 - inset) * pitch).astype(int)
     ya = np.round(ys + inset * pitch).astype(int)
     yb = np.round(ys + (1 - inset) * pitch).astype(int)
-    XA, YA = np.meshgrid(xa, ya)
-    XB, YB = np.meshgrid(xb, yb)
-    counts = [ii[YB, XB] - ii[YA, XB] - ii[YB, XA] + ii[YA, XA] for ii in integrals]
-    area = np.maximum(1, (XB - XA) * (YB - YA))
-    return np.stack(counts, axis=-1).astype(np.float32), area.astype(np.float32)
+    ya_c, yb_c, xa_r, xb_r = ya[:, None], yb[:, None], xa[None, :], xb[None, :]
+    counts = integral[yb_c, xb_r] - integral[ya_c, xb_r] - integral[yb_c, xa_r]
+    counts += integral[ya_c, xa_r]
+    area = np.maximum(1, (xb_r - xa_r) * (yb_c - ya_c))
+    return counts.astype(np.float32), area.astype(np.float32)
 
 
-def _lattice_score(integrals, shape, pitch, fx, fy, inset=0.12):
+def _lattice_score(integral, shape, pitch, fx, fy, inset=0.12):
     H, W = shape
     xs = np.arange(fx, W - pitch, pitch)
     ys = np.arange(fy, H - pitch, pitch)
     if len(xs) < 2 or len(ys) < 2:
         return -1.0, None, xs, ys
-    counts, area = _cell_counts(integrals, xs, ys, pitch, inset)
+    counts, area = _cell_counts(integral, xs, ys, pitch, inset)
     purity = counts.max(axis=-1) / area
     pure = purity >= 0.85
     return float(pure.sum() + 0.1 * purity.sum()), (counts, area, pure), xs, ys
 
 
-def _comb(profile: np.ndarray, pitch: float, phase: float) -> float:
-    grid = np.arange(len(profile), dtype=np.float32)
-    on = np.interp(np.arange(phase, len(profile) - 1, pitch), grid, profile)
-    off = np.interp(np.arange(phase + pitch / 2, len(profile) - 1, pitch), grid, profile)
-    return float(on.mean() - off.mean()) if len(on) and len(off) else 0.0
+def _comb(fp: np.ndarray, grid: np.ndarray, pitch: float, phase: float) -> float:
+    stop = len(fp) - 1
+    on = np.interp(np.arange(phase, stop, pitch), grid, fp)
+    off = np.interp(np.arange(phase + pitch / 2, stop, pitch), grid, fp)
+    if len(on) and len(off):
+        return float(np.add.reduce(on) / len(on) - np.add.reduce(off) / len(off))
+    return 0.0
 
 
 def _smooth(profile: np.ndarray, sigma: float) -> np.ndarray:
@@ -134,25 +142,67 @@ def _smooth(profile: np.ndarray, sigma: float) -> np.ndarray:
     return np.convolve(profile, kern / kern.sum(), mode="same")
 
 
+def _comb_estimates(fp: np.ndarray, slope: np.ndarray, pitch: float, phases: np.ndarray):
+    """Comb scores of all phases at once, good to about 1e-11; _comb gives the exact values.
+
+    None when a count of samples sits so close to a whole number that arange could count it
+    the other way."""
+    stop = len(fp) - 1
+    starts = (phases, phases + pitch / 2)
+    spans = [(stop - s) / pitch for s in starts]
+    if any((np.abs(q - np.rint(q)) < 1e-9).any() for q in spans):
+        return None
+    counts = [np.ceil(q) for q in spans]
+    width = int(max(c.max() for c in counts))
+    if width <= 0:
+        return np.zeros(len(phases))
+    steps = np.arange(width) * pitch
+    means = []
+    for s, n in zip(starts, counts, strict=True):
+        x = s[:, None] + steps[None, :]
+        j = np.minimum(x.astype(np.intp), stop - 1)
+        v = fp[j] + slope[j] * (x - j)
+        v[np.arange(width)[None, :] >= n[:, None]] = 0.0
+        means.append(v.sum(axis=1) / np.maximum(n, 1.0))
+    both = (counts[0] > 0) & (counts[1] > 0)
+    return np.where(both, means[0] - means[1], 0.0)
+
+
 def _best_phase(profile: np.ndarray, pitch: float, step: float = 0.25) -> tuple[float, float]:
+    """The phase with the strongest comb and its score; of equal scores, the last phase wins.
+
+    All phases are estimated together; those within the estimate's error of the best are
+    then scored exactly, so the result is the same as scoring every phase one by one."""
     sm = _smooth(profile, pitch * 0.05)
-    best = max((_comb(sm, pitch, ph), ph) for ph in np.arange(0, pitch, step))
+    phases = np.arange(0, pitch, step)
+    fp = sm.astype(np.float64)
+    if len(fp) < 3 or len(phases) < 2:
+        grid = np.arange(len(fp), dtype=np.float64)
+        best = max((_comb(fp, grid, pitch, ph), ph) for ph in phases)
+        return best[1], best[0]
+    slope = np.diff(fp)
+    est = _comb_estimates(fp, slope, pitch, phases)
+    grid = np.arange(len(fp), dtype=np.float64)
+    if est is None:
+        near = range(len(phases))
+    else:
+        tol = 1e-10 * (1.0 + float(np.abs(slope).max()) + float(np.abs(fp).max()))
+        near = np.flatnonzero(est >= est.max() - tol)
+    best = max((_comb(fp, grid, pitch, phases[i]), phases[i]) for i in near)
     return best[1], best[0]
 
 
 def _fit_lattices(cls, n_classes, px, py, extent):
     """Lattice fits for the strongest grid rhythm and its multiples and fractions."""
     H, W = cls.shape
-    integrals = [
-        cv2.integral((cls == k).astype(np.uint8)).astype(np.int64) for k in range(n_classes)
-    ]
+    integral = _class_integral(cls, n_classes)
     px = px / (px.mean() + 1e-6)
     py = py / (py.mean() + 1e-6)
 
     def evaluate(p):
         fx, cx = _best_phase(px, p, max(0.25, p / 40))
         fy, cy = _best_phase(py, p, max(0.25, p / 40))
-        _, data, _, _ = _lattice_score(integrals, (H, W), p, fx, fy, inset=0.1)
+        _, data, _, _ = _lattice_score(integral, (H, W), p, fx, fy, inset=0.1)
         if data is None:
             return -1.0, fx, fy
         return max(0.0, cx + cy) * (0.7 + 0.3 * float(data[2].mean())), fx, fy
@@ -196,7 +246,7 @@ def _fit_lattices(cls, n_classes, px, py, extent):
         sc, fx, fy, p = refine(q, 0.008, 9)
         if sc <= 0:
             continue
-        _, data, _, _ = _lattice_score(integrals, (H, W), p, fx, fy, inset=0.25)
+        _, data, _, _ = _lattice_score(integral, (H, W), p, fx, fy, inset=0.25)
         if data is None:
             continue
         counts, area, _ = data
@@ -261,9 +311,27 @@ def _register(lattice, layout, plain, n_classes, period=None):
 
 
 def classify_pixels(lab: np.ndarray, palette_lab: np.ndarray) -> np.ndarray:
-    d = np.linalg.norm(lab[:, :, None, :] - palette_lab[None, None, :, :], axis=3)
-    cls = np.argmin(d, axis=2).astype(np.int32)
-    cls[np.min(d, axis=2) > COLOR_MATCH] = -1
+    """Index of the nearest palette color per pixel, -1 where none is within COLOR_MATCH."""
+    planes = [np.ascontiguousarray(lab[:, :, i]) for i in range(3)]
+    best = np.full(lab.shape[:2], np.inf, np.float32)
+    cls = np.zeros(lab.shape[:2], np.int32)
+    d = np.empty_like(best)
+    t = np.empty_like(best)
+    for k, color in enumerate(palette_lab):
+        # the same float32 operations in the same order as norm over the channel axis
+        np.subtract(planes[0], color[0], out=d)
+        np.multiply(d, d, out=d)
+        np.subtract(planes[1], color[1], out=t)
+        np.multiply(t, t, out=t)
+        np.add(d, t, out=d)
+        np.subtract(planes[2], color[2], out=t)
+        np.multiply(t, t, out=t)
+        np.add(d, t, out=d)
+        np.sqrt(d, out=d)
+        closer = d < best
+        np.copyto(best, d, where=closer)
+        cls[closer] = k
+    cls[best > COLOR_MATCH] = -1
     return cls
 
 
@@ -298,10 +366,21 @@ def _canvas(mask: np.ndarray, scale: float, W: int, H: int) -> tuple[float, floa
     )
 
 
-def _survey(small, lab, palette_lab, plain, ox, oy, pitch, shape):
+def _lab_integrals(lab: np.ndarray) -> list[np.ndarray]:
+    return [cv2.integral(lab[:, :, k].astype(np.float64)) for k in range(3)]
+
+
+def _violet_integral(small: np.ndarray) -> np.ndarray:
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    violet = ((hsv[:, :, 0] >= 118) & (hsv[:, :, 0] <= 158) & (hsv[:, :, 1] >= 70)
+              & (hsv[:, :, 2] >= 90))  # fmt: skip
+    return cv2.integral(violet.astype(np.float64))
+
+
+def _survey(lab_ii, violet_ii, shape_px, palette_lab, plain, ox, oy, pitch, shape):
     """Per lattice cell: does it show an empty square's own color, and how violet is it."""
     rows, cols = shape
-    H, W = lab.shape[:2]
+    H, W = shape_px
     xs = np.arange(ox, W - pitch, pitch)[:cols]
     ys = np.arange(oy, H - pitch, pitch)[:rows]
     inset = 0.15
@@ -313,20 +392,15 @@ def _survey(small, lab, palette_lab, plain, ox, oy, pitch, shape):
     XB, YB = np.meshgrid(xb, yb)
     area = np.maximum(1, (XB - XA) * (YB - YA)).astype(np.float32)
 
-    def mean_of(channel):
-        ii = cv2.integral(channel.astype(np.float64))
+    def mean_of(ii):
         return (ii[YB, XB] - ii[YA, XB] - ii[YB, XA] + ii[YA, XA]) / area
 
-    mean = np.stack([mean_of(lab[:, :, k]) for k in range(3)], axis=-1)
+    mean = np.stack([mean_of(ii) for ii in lab_ii], axis=-1)
     d_all = np.linalg.norm(mean[:, :, None, :] - palette_lab[None, None, :, :], axis=3)
     nearest = d_all.argmin(axis=2)
     dist = d_all.min(axis=2)
     limit = np.where(nearest == plain, STRICT_PLAIN, STRICT_PREMIUM)
-    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
-    violet = ((hsv[:, :, 0] >= 118) & (hsv[:, :, 0] <= 158) & (hsv[:, :, 1] >= 70)
-              & (hsv[:, :, 2] >= 90))  # fmt: skip
-    frac = mean_of(violet.astype(np.float32))
-    return dist < limit, frac
+    return dist < limit, mean_of(violet_ii)
 
 
 def _dense_run(counts: np.ndarray) -> tuple[int, int]:
@@ -403,7 +477,7 @@ def _choose_offset(cands, strict, frac, profile, hint, board_box):
     return best[1] if best else cands[0]
 
 
-def _measure(lab, scale, grid, canvas, profile, palette_lab, keys):
+def _measure(lab, scale, grid, canvas, profile, palette_lab, keys, lab_ii=None):
     """The board's extent (first and last row and column) from how squares look on screen.
 
     A square counts when its average color is its own empty color. The extent is the dense
@@ -435,8 +509,7 @@ def _measure(lab, scale, grid, canvas, profile, palette_lab, keys):
     XB, YB = np.meshgrid(xb_c, yb_c)
     area = np.maximum(1, (XB - XA) * (YB - YA)).astype(np.float32)
     mean = np.zeros((rows, cols, 3), np.float32)
-    for k in range(3):
-        ii = cv2.integral(lab[:, :, k].astype(np.float64))
+    for k, ii in enumerate(lab_ii if lab_ii is not None else _lab_integrals(lab)):
         mean[:, :, k] = (ii[YB, XB] - ii[YA, XB] - ii[YB, XA] + ii[YA, XA]) / area
     classes = _layout_classes(profile, keys)
     d = np.linalg.norm(mean - palette_lab[classes], axis=2)
@@ -522,6 +595,7 @@ def locate_board(
     s = min(1.0, work_width / W)
     small = cv2.resize(frame, (round(W * s), round(H * s)), interpolation=cv2.INTER_AREA)
     lab = to_lab(small)
+    H_s, W_s = lab.shape[:2]
     alias = _aliases(palette_lab)
     cls = classify_pixels(lab, palette_lab)
     cls = np.where(cls >= 0, alias[np.maximum(cls, 0)], -1).astype(np.int32)
@@ -548,12 +622,16 @@ def locate_board(
     plain = int(alias[keys.index(".")])
     plain_key = keys.index(".")
     best = None
+    lab_ii = _lab_integrals(lab)
+    violet_ii = _violet_integral(small)
     for pitch_c, fx, fy, lattice in _fit_lattices(cls, len(keys), px, py, min(x1 - x0, y1 - y0)):
         if int((lattice >= 0).sum()) < MIN_CELLS:
             continue
         # only squares that show an empty square's own color take part: the background around
         # the board and anything lying over it must not be matched against the layout
-        strict, _ = _survey(small, lab, palette_lab, plain_key, fx, fy, pitch_c, lattice.shape)
+        strict, _ = _survey(
+            lab_ii, violet_ii, (H_s, W_s), palette_lab, plain_key, fx, fy, pitch_c, lattice.shape
+        )
         # plain squares must show the plain color exactly (the background around the board
         # looks almost the same); premium squares are recognised by their own color
         lattice = np.where(strict | (lattice != plain), lattice, -1)
@@ -574,7 +652,9 @@ def locate_board(
         raise BoardNotFound(
             f"board pattern not recognized (match {match_rate:.2f}, margin {margin:.2f})"
         )
-    strict, frac = _survey(small, lab, palette_lab, plain_key, ox, oy, pitch, lattice.shape)
+    strict, frac = _survey(
+        lab_ii, violet_ii, (H_s, W_s), palette_lab, plain_key, ox, oy, pitch, lattice.shape
+    )
     if strict.any():
         rlo, rhi = _dense_run(strict.sum(axis=1))
         clo, chi = _dense_run(strict.sum(axis=0))
@@ -595,7 +675,7 @@ def locate_board(
     )
     # the board's extent: measured on the squares themselves, so a board that has grown, or
     # that is hidden in part, is judged by what is there rather than by the layout alone
-    extent = _measure(lab, s, grid, canvas, profile, palette_lab, keys)
+    extent = _measure(lab, s, grid, canvas, profile, palette_lab, keys, lab_ii)
     base = BoardView(
         grid, np.zeros((profile.height, profile.width), bool), match_rate, margin, used
     )
