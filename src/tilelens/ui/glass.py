@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
@@ -15,6 +15,7 @@ from tilelens.state.names import square_name
 CYAN = QColor(34, 211, 238)
 GREEN = QColor(52, 211, 153)
 AMBER = QColor(251, 191, 36)
+MAGENTA = QColor(255, 20, 147)  # a board tile TileLens has read
 INK = QColor(240, 246, 255)
 GLASS = QColor(13, 18, 36, 215)
 GHOST_FILL = QColor(8, 28, 44, 185)
@@ -38,10 +39,11 @@ class OverlayScene:
     rack_read: tuple[int, int] | None = None
     value_of: Callable[[str, bool], int] | None = None
     framed: bool = False
+    seen: list[QRectF] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
-        return self.move is None and self.board is None and self.rack is None
+        return self.move is None and self.board is None and self.rack is None and not self.seen
 
 
 def _font(px: float, bold: bool = True) -> QFont:
@@ -178,6 +180,18 @@ def paint_ghosts(
     )
 
 
+def paint_seen(p: QPainter, rects: list[QRectF]) -> None:
+    """Outline every board tile TileLens has read, so a tile left out shows as a gap."""
+    if not rects:
+        return
+    side = min(rects[0].width(), rects[0].height())
+    radius = side * 0.18
+    p.setPen(QPen(alpha(MAGENTA, 245), max(3.0, side * 0.07)))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    for rect in rects:
+        p.drawRoundedRect(rect.adjusted(-1, -1, 1, 1), radius, radius)
+
+
 def paint_rack(p: QPainter, rect: QRectF, read: tuple[int, int] | None) -> None:
     known, total = read or (0, 0)
     ok = total > 0 and known == total
@@ -199,12 +213,14 @@ def paint_scene(p: QPainter, scene: OverlayScene) -> None:
         paint_rack(p, scene.rack, scene.rack_read)
     if scene.move is not None and scene.rect_of is not None:
         paint_ghosts(p, scene.move, scene.rect_of, scene.value_of)
+    paint_seen(p, scene.seen)
 
 
 __all__ = [
     "AMBER",
     "CYAN",
     "GREEN",
+    "MAGENTA",
     "OverlayScene",
     "paint_pill",
     "paint_scene",

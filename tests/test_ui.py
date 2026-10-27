@@ -394,3 +394,68 @@ def test_glass_panel_cards_and_states(qapp, calibration, tmp_path):
     assert "CHECK" in panel.live.text()
     panel.close()
     session.stop()
+
+
+def _paint(scene, w=400, h=300):
+    from tilelens.ui.glass import paint_scene
+
+    img = QImage(w, h, QImage.Format.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    paint_scene(p, scene)
+    p.end()
+    return img
+
+
+def _magenta_pixels(img, rect=None):
+    from tilelens.ui.glass import MAGENTA
+
+    count = 0
+    for x in range(img.width()):
+        for y in range(img.height()):
+            if rect is not None and not rect.contains(x, y):
+                continue
+            c = img.pixelColor(x, y)
+            if (
+                c.alpha() > 200
+                and abs(c.red() - MAGENTA.red()) < 12
+                and abs(c.green() - MAGENTA.green()) < 12
+                and abs(c.blue() - MAGENTA.blue()) < 40
+            ):
+                count += 1
+    return count
+
+
+def test_every_board_tile_that_was_read_is_outlined_in_magenta(qapp):
+    from PySide6.QtCore import QRectF
+
+    from tilelens.ui.glass import OverlayScene
+
+    a, b = QRectF(150, 120, 60, 60), QRectF(250, 120, 60, 60)
+    img = _paint(OverlayScene(seen=[a, b]))
+    assert _magenta_pixels(img, a.adjusted(-8, -8, 8, 8)) > 150
+    assert _magenta_pixels(img, b.adjusted(-8, -8, 8, 8)) > 150
+    assert _magenta_pixels(img, QRectF(0, 0, 100, 100)) == 0  # and nowhere else
+    assert OverlayScene(seen=[a]).empty is False
+    assert _magenta_pixels(_paint(OverlayScene())) == 0
+
+
+def test_session_outlines_the_played_tiles_it_reads_and_nothing_else(qapp, calibration, tmp_path):
+    from tilelens.vision.recognizer import COMMITTED, RECENT
+
+    session, game, frame = make_session(qapp, calibration, tmp_path)
+    run_until(qapp, session, {Status.READY})
+    reading, mapper = session.controller.last_reading, session.overlay_mapper()
+    expected = {
+        (r, c)
+        for r, row in enumerate(reading.cells)
+        for c, cell in enumerate(row)
+        if cell.letter and cell.state in (COMMITTED, RECENT)
+    }
+    assert expected
+    rects = session._seen_tiles(reading, mapper)
+    assert len(rects) == len(expected)
+    assert {(round(r.x()), round(r.y())) for r in rects} == {
+        (round(mapper.rect(r, c, 0).x()), round(mapper.rect(r, c, 0).y())) for r, c in expected
+    }
+    assert session.overlay_scene().seen

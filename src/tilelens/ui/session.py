@@ -621,6 +621,7 @@ class LiveSession(QObject):
             rack = QRectF(x0 * sx, y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy)
         known = sum(1 for t in reading.rack if not t.uncertain and (t.letter or t.blank))
         move = None if self.preview_hidden else self.selected_move()
+        seen = self._seen_tiles(reading, mapper)
         return OverlayScene(
             move=move,
             rect_of=mapper.rect,
@@ -630,7 +631,25 @@ class LiveSession(QObject):
             rack_read=(known, len(reading.rack)),
             value_of=self.profile.tile_value,
             framed=self.board_framed(),
+            seen=seen,
         )
+
+    def _seen_tiles(self, reading, mapper) -> list[QRectF]:
+        """Every played tile on the board that the search is using, in overlay points."""
+        from tilelens.vision.recognizer import COMMITTED, RECENT
+
+        bounds = reading.bounds
+        rects = []
+        for r, row in enumerate(reading.cells):
+            for c, cell in enumerate(row):
+                if not cell.letter or cell.state not in (COMMITTED, RECENT) or cell.foreign:
+                    continue
+                if bounds is not None and not (
+                    bounds[0] <= r <= bounds[2] and bounds[1] <= c <= bounds[3]
+                ):
+                    continue
+                rects.append(mapper.rect(r, c, 0))
+        return rects
 
     def _log_event(self, text: str) -> None:
         """Append what the tracker decided to a small log, for finding out why it did it."""
