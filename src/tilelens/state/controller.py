@@ -8,6 +8,7 @@ from enum import StrEnum
 
 import numpy as np
 
+from tilelens import telemetry
 from tilelens.capture.change import ChangeDetector
 from tilelens.rules.board import WALL_CELL, Board, rack_to_str
 from tilelens.rules.profile import BLANK, Profile
@@ -250,7 +251,9 @@ class LiveController:
         if self.paused:
             self._set(Status.PAUSED, "Paused")
             return
+        t_grab = time.perf_counter()
         frame = self.source.grab()
+        grab_ms = (time.perf_counter() - t_grab) * 1000
         self.last_frame = frame
         if self.hold is not None:
             self._observe_held(frame, now)
@@ -262,6 +265,8 @@ class LiveController:
         changed = detector.update(frame)
         if changed:
             self._last_change = now
+        if telemetry.enabled():
+            telemetry.emit("frame", grab_ms=round(grab_ms, 2), changed=bool(changed))
         snap = self._snapshot
         settled = (
             self._stable_sig is not None
@@ -290,6 +295,13 @@ class LiveController:
         self.last_grid = reading.grid
         self.last_frame_size = (frame.shape[1], frame.shape[0])
         self.last_read_ms = reading.elapsed * 1000
+        if telemetry.enabled():
+            telemetry.emit(
+                "read",
+                read_ms=round(self.last_read_ms, 2),
+                relocated=getattr(self.recognizer, "locates", 0) != locates,
+                visible=bool(reading.visible),
+            )
         bounds = getattr(reading, "bounds", None)
         if bounds != self._bounds_logged:
             if self._bounds_logged is not None and bounds is not None:
@@ -433,6 +445,7 @@ class LiveController:
         self._set(Status.NOT_VISIBLE, why)
 
     def _on_stable(self, reading: Reading, frame, sig, now) -> None:
+        telemetry.emit("stable", frames=self._count)
         self._stable_sig = sig
         self._stable_frame = frame
         self._check_reading = None
@@ -730,6 +743,7 @@ class LiveController:
             self._set(
                 Status.READY, "", result=self.cache[pid], published_at=now, solve_ms=0.0, **base
             )
+            telemetry.emit("publish", cached=True, solve_ms=0.0, moves=len(self.cache[pid].moves))
             return
         if not rack:
             empty = SearchResult([], True, 0, 0.0)
@@ -808,6 +822,9 @@ class LiveController:
                 published_at=now,
                 solve_ms=res.elapsed * 1000,
                 **self._keep(snap),
+            )
+            telemetry.emit(
+                "publish", cached=False, solve_ms=round(res.elapsed * 1000, 2), moves=len(res.moves)
             )
 
     @staticmethod
