@@ -1,21 +1,25 @@
 # TileLens
 
-Screen-reading move finder for crossword-style tile games.
+[![CI](https://github.com/JMBugarin/tilelens/actions/workflows/ci.yml/badge.svg)](https://github.com/JMBugarin/tilelens/actions/workflows/ci.yml)
+![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue) ![macOS](https://img.shields.io/badge/macOS-Apple%20silicon-lightgrey) ![License](https://img.shields.io/badge/license-MIT-green)
 
-> TileLens is a fun side project for experimenting with computer vision and word search. It is fine for messing around with friends, but it is not meant for competitive or ranked play, and using assistance tools in online games can get your account banned. You are responsible for how and where you use it. This project is not affiliated with any game or company.
-
-TileLens watches the part of your screen that shows a crossword-style tile board. It reads the
-board and your rack, finds the three highest-scoring legal placements for this turn, and
-previews them as ghost tiles over the game window. It never clicks or places anything, and
-everything runs on your machine.
+**A real-time computer-vision and search system: it reads a tile board off your screen, finds every legal word placement, and previews the top three as ghost tiles, all locally, in milliseconds.**
 
 ![TileLens over Discord's Letter League: confirmed rack, ghost tiles for the selected play and the top three placements](docs/images/discord-tracking.png)
 
-*TileLens running over Letter League in Discord: the rack is outlined green once every tile is
-read, the selected play is previewed as dashed ghost tiles, and the panel ranks the top three
-plays by total points. The player's name is blurred.*
+*Rack outlined green once every tile is read, selected play previewed as dashed ghost tiles, top three plays ranked by points. The player's name is blurred.*
 
-![The panel: top three plays with points split into word and crossing words](docs/images/discord-panel.png)
+> A side project for experimenting with computer vision and word search, not for competitive or ranked play (assistance tools can get accounts banned). It never clicks or places anything, and is not affiliated with any game or company.
+
+## Highlights
+
+- **Fast exact search.** DAWG-based move generator finds every legal placement: **2.2 ms median** on mid-game 13x13 boards with a 204k-word list. Checked against an independent brute-force solver on 400 seeded positions per test run (5,000+ more in the slow suite).
+- **Vision that knows what it doesn't know.** 99.9-100% of squares read correctly on synthetic boards across five themes (one held out from all tuning), **zero silent errors**; uncertain tiles are flagged, never guessed. On real Discord captures: 14/14 letters and values at 100%, 75% and 50% scale, with no calibration (small sample, see [limits](docs/limits.md)).
+- **Real-time pipeline.** 10 Hz capture, change detection so unchanged frames cost 22-40 ms, a separate search process, and stale results never shown.
+- **Engineered like a product.** Strict lint and format checks, 235 test functions including GUI and randomized suites, CI on macOS and Ubuntu, reproducible `uv` lockfile, benchmarks with raw JSON committed.
+- **Private.** No network requests, telemetry, accounts or cloud models. Frames stay in memory.
+
+**Stack:** Python · OpenCV · NumPy · PySide6 · PyObjC/Quartz · DAWG · multiprocessing · uv · pytest · ruff · GitHub Actions
 
 ## How it works
 
@@ -79,145 +83,7 @@ Recording**, enable the terminal you run TileLens from, and reopen that terminal
 panel shows "Game not visible: Screen Recording permission is missing". See
 [docs/manual-verification.md](docs/manual-verification.md).
 
-## Using it with Letter League in Discord
-
-1. Start TileLens (`uv run tilelens`) and open the game in Discord, windowed, maximized or
-   fullscreen. With a profile that has an `[appearance]` section (see below) there is nothing
-   to calibrate: TileLens finds the board, reads the rack and learns the game's look from the
-   first screen it sees, and the control window steps out of the way.
-2. Play. The panel shows **Tracking** and the top three plays. The first play is previewed on
-   the board; click another card to preview that one instead.
-3. **Click a card to place it.** The ghost tiles freeze (the panel says **Holding**) so you can
-   lay your tiles over them. When your rack is full again with new letters, TileLens reads it
-   and resumes by itself. Click the card again, or **Resume tracking**, to let go early.
-4. When someone else plays, the old suggestion is dropped at once and the position is searched
-   again. Zooming or panning clears the preview and realigns it when the board is found.
-
-The panel states and what to do:
-
-| State | Meaning | What to do |
-| --- | --- | --- |
-| Tracking | Cards are current for the position on screen | Nothing |
-| Aligning | The board moved and is being found again | Nothing |
-| Reading rack | The rack or board is still changing | Nothing |
-| Calculating | The search is running | Nothing |
-| Holding | A card was clicked; the suggestion is frozen | Place your tiles |
-| Check one tile | A tile cannot be worked around | Tap the letter it names |
-| Board obscured | A menu, popup or window covers the board | Bring the board back into view |
-| Paused | You paused tracking | Press Resume |
-
-An unsure tile does not stop the cards: the panel says which tile and shows its best letters as
-buttons, and one tap teaches TileLens that tile for good. **Calibrate** re-learns the game from
-the screen without typing; only if the rack cannot be read does it open a dialog with the best
-guess filled in. The ⚙ button opens the settings window, which is also in the menu bar.
-
-![The fallback calibration dialog on a Letter League screen, with the rack already read](docs/images/calibrate.png)
-
-If a play scores differently in the game than in TileLens, run
-`uv run tilelens check-screen` while the game is on screen: it prints what was read, the
-rack, the top plays and the time each step took. Tile values are read from the rack tiles
-themselves and saved beside your profile (`<profile>.learned.json`).
-
-### Without an `[appearance]` section
-
-A profile without it cannot find the board by itself. Select the region, press **Calibrate**,
-drag around the board grid, type the board and the rack, and use **Add this screen** to teach
-more letters. See [docs/vision.md](docs/vision.md).
-
-## Profile format
-
-Every rule lives in a TOML profile: board size, premium squares, tile values and counts, rack
-size, blanks, the full-rack bonus, how word premiums stack, where the first move must go, and
-the word list path. No real game's profile ships with TileLens. These two are fictional:
-
-```toml
-format = "tilelens-profile"
-version = 1
-name = "Demo Pocket"
-
-[board]
-width = 9
-height = 9
-layout = [
-  "T..d.d..T",
-  ".D.....D.",
-  "..+...+..",
-  "d...t...d",
-  "..q...q..",
-  "d...t...d",
-  "..+...+..",
-  ".D.....D.",
-  "T..d.d..T",
-]
-
-[board.legend]
-d = "double_letter"
-t = "triple_letter"
-D = "double_word"
-T = "triple_word"
-q = { name = "quad_letter", letter = 4 }
-"+" = { name = "double_both", letter = 2, word = 2 }
-
-[rules]
-start_squares = [[2, 2], [6, 6]]
-word_premium_stacking = "add"
-
-[rack]
-size = 5
-blanks = 1
-
-[scoring]
-full_rack_bonus = 25
-
-[tiles.values]
-A = 1
-B = 3
-# ...
-
-[tiles.distribution]
-A = 5
-B = 1
-# ...
-
-[words]
-path = "demo_words.txt"
-```
-
-To let TileLens find the board by itself (zoom, pan, fullscreen and no calibration typing),
-add the colors of the empty squares and of a rack tile, as shown on your screen:
-
-```toml
-[appearance]
-rack_tile = "#EF8E66"
-squares = { "." = "#FBE6CA", d = "#B7E4FC", t = "#F8D272", D = "#BDF4B2", T = "#F1A27F" }
-```
-
-Check a profile with `uv run tilelens check-profile my.toml`. Every key is described in
-[docs/profile-format.md](docs/profile-format.md).
-
-## Word list and overrides
-
-TileLens ships no game's word list. Every word a suggestion forms (main word, extension and
-crossing words) is checked against a **baseline list** plus **overrides**, small allow and block
-lists of words the game was seen to accept or reject, each with its evidence and date. Overrides
-win over the baseline and live next to your profile, so replacing the baseline keeps them.
-
-For Letter League the working assumption is the U.S. Merriam-Webster *Official Scrabble Players
-Dictionary*, which is **not confirmed** to be what the game uses. The exact list cannot be
-shipped here, so `uv run tilelens words install-baseline` installs ENABLE (172,823 words), an
-older free Scrabble-style list that is *not* that dictionary and lacks newer words such as QI
-and ZA. If you own the exact list, install it with `--file`. See
-[docs/word-lists.md](docs/word-lists.md).
-
-```bash
-uv run tilelens words status                       # which list, which overrides, which versions
-uv run tilelens words block UMU --evidence "game rejected UMU, no other word formed"
-uv run tilelens words allow QI --evidence "accepted at J4 on turn 9"
-uv run tilelens import-words ~/my-words.txt --profile my.toml   # or bring your own list
-```
-
-Copy `profiles/letter-league.overrides.json` (UMU blocked) next to your profile as
-`<profile name>.overrides.json` to start from it.
+**Next:** [usage with Letter League](docs/usage.md), [profile format](docs/profile-format.md), [word lists](docs/word-lists.md).
 
 ## Measured performance
 
@@ -252,42 +118,11 @@ with no calibration at all, from stock-font shapes and the printed values:
 That is a small sample. Before this change, the first of those racks read 3 of 7 tiles
 correctly and flagged or misread the other four, on a calibration that had met 12 of 26 letters.
 
-### Settled position to updated suggestions
-
-Measured on the live game with `uv run tilelens check-screen` (3456x2234 capture, M5 Pro):
-
-- A frame is read in 22–40 ms while the board has not moved, because squares that look exactly
-  as before are not read again. Finding the board again after a zoom, pan or resize takes about
-  0.5 s, and the preview is cleared before that starts.
-- From a settled position to the top three plays: about 0.25 s of compute (read, search),
-  after the three matching frames the loop waits for (0.3 s at 10 Hz).
-- The search itself takes a few milliseconds on a mid-game board. Earlier synthetic runs
-  of the whole app measured 0.57 s median to a published result.
+Settled-position timings and methodology: [docs/performance.md](docs/performance.md).
 
 ## Limits
 
-- **Dictionary mismatch.** The baseline is an assumption about the game's dictionary. If it
-  differs, suggestions can be words the game rejects (block them) and some valid plays will be
-  missing (allow them). The word list is also used to settle
-  unclear letters, so a play the list lacks can make TileLens doubt a correctly read tile; the
-  panel says when it changed a letter.
-- **The board must be on screen.** A menu, popup or another window over the board reads as
-  "Board obscured". Squares behind the game's own panels (timer, rack) are never read, and
-  suggestions avoid them.
-- **Tile values.** Rack tiles show a letter's own value, which TileLens learns. Played tiles show
-  the value they scored (premiums applied) and Letter League counts that number when the tile is
-  used again, so TileLens reads it per tile. A number it cannot read falls back to the letter's
-  own value, which scores such a play too low. A letter that has not been in your rack yet uses
-  the profile's value until it is.
-- **Letter League was tested live on one machine** (macOS 26.6, Apple silicon, Discord's
-  windowed and maximized view). Discord's own fullscreen could not be driven from the test
-  setup; the panel, overlay and dialogs were verified over a native fullscreen window of
-  another app, which is the same macOS mechanism. Blank tiles were not seen in the live game.
-- **Tentative tiles.** A game that draws placed-but-unplayed tiles exactly like played ones
-  cannot be told apart by color. Clicking a card holds the suggestion so your own placing
-  never counts as a change.
-- **One turn only.** TileLens maximizes this turn's score, with no strategy, rack-leave
-  evaluation or opponent modeling.
+TileLens maximizes this turn's score only (no strategy or opponent modeling). Its word list is an assumption about the game's dictionary, and live testing covered one machine (macOS 26.6, Apple silicon). Details: [docs/limits.md](docs/limits.md).
 
 ## Privacy
 
