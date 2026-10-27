@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 
 import numpy as np
@@ -13,6 +14,121 @@ PERMISSION_HELP = (
     "app that launched TileLens (for example Terminal, iTerm or TileLens.app), then quit and "
     "reopen that app. Without it, captures contain only the desktop wallpaper."
 )
+
+
+BACKDROP_ID = "tilelens.backdrop"
+MATERIAL = "HUDWindow"
+_MIN_POINTER = 0x10000  # Qt's offscreen platform hands out small counters, not NSView pointers
+
+
+def _native_window(win_id: int):
+    """The NSWindow behind a Qt winId(), or None for an id that cannot be an NSView pointer."""
+    win_id = int(win_id)
+    if win_id < _MIN_POINTER or win_id % 16:
+        return None
+    import objc
+
+    return objc.objc_object(c_void_p=win_id).window()
+
+
+def _frame_view(window):
+    content = window.contentView()
+    return content, (content.superview() if content is not None else None)
+
+
+def _find_backdrop(frame_view):
+    for view in frame_view.subviews() or ():
+        if view.identifier() == BACKDROP_ID:
+            return view
+    return None
+
+
+def _remove(frame_view) -> bool:
+    effect = _find_backdrop(frame_view) if frame_view is not None else None
+    if effect is None:
+        return False
+    effect.removeFromSuperview()
+    return True
+
+
+def apply_backdrop(win_id: int, radius: float, dark: bool, inset: float = 0.0) -> bool:
+    """Put an NSVisualEffectView behind the Qt view so the window blurs what is behind it.
+
+    The effect view is a sibling below the content view in the window's frame view; a
+    subview of the Qt view would be drawn over Qt's own painting. Its layer carries the
+    corner radius, so the blur takes the rounded shape. A False return leaves no effect view
+    behind, so the caller's solid fallback is not drawn over a stale blur.
+    """
+    frame_view = None
+    try:
+        import AppKit
+        from AppKit import (
+            NSAppearance,
+            NSAppearanceNameAqua,
+            NSAppearanceNameDarkAqua,
+            NSColor,
+            NSInsetRect,
+            NSViewHeightSizable,
+            NSViewWidthSizable,
+            NSVisualEffectBlendingModeBehindWindow,
+            NSVisualEffectStateActive,
+            NSVisualEffectView,
+            NSWindowBelow,
+        )
+
+        window = _native_window(win_id)
+        if window is None:
+            return False
+        content, frame_view = _frame_view(window)
+        if frame_view is None:
+            return False
+        frame = NSInsetRect(content.frame(), max(0.0, inset), max(0.0, inset))
+        if frame.size.width <= 0 or frame.size.height <= 0:
+            _remove(frame_view)
+            return False
+        radius = max(0.0, min(float(radius), frame.size.width / 2, frame.size.height / 2))
+
+        window.setOpaque_(False)
+        window.setBackgroundColor_(NSColor.clearColor())
+        effect = _find_backdrop(frame_view)
+        fresh = effect is None
+        if fresh:
+            effect = NSVisualEffectView.alloc().initWithFrame_(frame)
+            effect.setIdentifier_(BACKDROP_ID)
+            effect.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
+            effect.setState_(NSVisualEffectStateActive)
+            effect.setMaterial_(getattr(AppKit, f"NSVisualEffectMaterial{MATERIAL}"))
+            effect.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+            effect.setWantsLayer_(True)
+        else:
+            effect.setFrame_(frame)
+        effect.setAppearance_(
+            NSAppearance.appearanceNamed_(
+                NSAppearanceNameDarkAqua if dark else NSAppearanceNameAqua
+            )
+        )
+        layer = effect.layer()
+        layer.setCornerRadius_(radius)
+        layer.setMasksToBounds_(True)
+        with contextlib.suppress(Exception):
+            layer.setCornerCurve_("continuous")
+        if fresh:
+            frame_view.addSubview_positioned_relativeTo_(effect, NSWindowBelow, content)
+        return True
+    except Exception:
+        with contextlib.suppress(Exception):
+            _remove(frame_view)
+        return False
+
+
+def clear_backdrop(win_id: int) -> bool:
+    try:
+        window = _native_window(win_id)
+        if window is None:
+            return False
+        return _remove(_frame_view(window)[1])
+    except Exception:
+        return False
 
 
 def other_windows(keep: set[int] = frozenset()) -> list[int]:
@@ -90,11 +206,9 @@ class MacAdapter(PlatformAdapter):
     def exclude_from_capture(self, win_id: int) -> bool:
         """Set NSWindowSharingNone on the NSWindow behind a Qt widget's winId()."""
         try:
-            import objc
             from AppKit import NSWindowSharingNone
 
-            view = objc.objc_object(c_void_p=int(win_id))
-            window = view.window()
+            window = _native_window(win_id)
             if window is None:
                 return False
             window.setSharingType_(NSWindowSharingNone)
@@ -104,9 +218,7 @@ class MacAdapter(PlatformAdapter):
 
     def include_in_capture(self, win_id: int) -> None:
         try:
-            import objc
-
-            window = objc.objc_object(c_void_p=int(win_id)).window()
+            window = _native_window(win_id)
             if window is not None:
                 self._keep.add(int(window.windowNumber()))
         except Exception:
@@ -119,7 +231,6 @@ class MacAdapter(PlatformAdapter):
         out of other apps' full-screen Spaces however their collection behavior is set.
         """
         try:
-            import objc
             from AppKit import (
                 NSStatusWindowLevel,
                 NSWindowCollectionBehaviorCanJoinAllSpaces,
@@ -127,8 +238,7 @@ class MacAdapter(PlatformAdapter):
                 NSWindowStyleMaskNonactivatingPanel,
             )
 
-            view = objc.objc_object(c_void_p=int(win_id))
-            window = view.window()
+            window = _native_window(win_id)
             if window is None:
                 return False
             if hasattr(window, "setFloatingPanel_"):
@@ -143,6 +253,12 @@ class MacAdapter(PlatformAdapter):
             return True
         except Exception:
             return False
+
+    def apply_backdrop(self, win_id: int, radius: float, dark: bool, inset: float = 0.0) -> bool:
+        return apply_backdrop(win_id, radius, dark, inset)
+
+    def clear_backdrop(self, win_id: int) -> bool:
+        return clear_backdrop(win_id)
 
     def close(self) -> None:
         self._grabber.close()

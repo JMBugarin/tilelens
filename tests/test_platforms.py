@@ -1,4 +1,7 @@
+import os
+import subprocess
 import sys
+import textwrap
 
 import numpy as np
 import pytest
@@ -56,6 +59,124 @@ def test_macos_adapter_captures_and_reports_permission():
     assert frame.shape[:2] == (round(48 * scale), round(64 * scale))
     assert "Screen Recording" in adapter.permission_help()
     adapter.close()
+
+
+def test_default_adapter_has_no_backdrop():
+    class Plain(PlatformAdapter):
+        def capture(self, region):
+            return np.zeros((1, 1, 3), np.uint8)
+
+        def screen_permission(self):
+            return None
+
+    plain = Plain()
+    assert plain.apply_backdrop(0x20000, 26.0, True) is False
+    assert plain.apply_backdrop(0x20000, 26.0, False, 24.0) is False
+    assert plain.clear_backdrop(0x20000) is False
+
+
+@pytest.mark.gui
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS adapter")
+def test_macos_backdrop_on_a_real_window():
+    code = textwrap.dedent(
+        """
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication, QWidget
+        from tilelens.platforms import get_adapter
+
+        app = QApplication([])
+        w = QWidget(
+            None,
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.NoDropShadowWindowHint,
+        )
+        w.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        w.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        w.setGeometry(40, 120, 220, 140)
+        w.show()
+        app.processEvents()
+        a, wid = get_adapter(), int(w.winId())
+        import objc
+        window = objc.objc_object(c_void_p=wid).window()
+        def count():
+            return sum(1 for v in window.contentView().superview().subviews() if v.identifier())
+        out = [a.show_on_all_spaces(wid), a.apply_backdrop(wid, 26, True, 20)]
+        out += [a.apply_backdrop(wid, 18, False, 10), count() == 1]
+        w.resize(300, 200)
+        app.processEvents()
+        out += [a.exclude_from_capture(wid), a.clear_backdrop(wid), count() == 0]
+        out += [a.clear_backdrop(wid) is False, a.apply_backdrop(3, 26, True) is False]
+        print("RESULT", out)
+        w.close()
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "QT_QPA_PLATFORM": "cocoa"},
+    )
+    assert "RESULT [True, True, True, True, True, True, True, True, True]" in proc.stdout, (
+        proc.stdout + proc.stderr
+    )
+
+
+@pytest.mark.gui
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS adapter")
+def test_glass_window_gets_a_point_sized_inset_blur_from_the_adapter():
+    code = textwrap.dedent(
+        """
+        import objc
+        from PySide6.QtWidgets import QApplication
+        from tilelens.platforms import get_adapter
+        from tilelens.ui.design import GlassWindow
+        from tilelens.ui.design.material import SHADOW_BLEED
+
+        app = QApplication([])
+        adapter = get_adapter()
+        GlassWindow.backdrop = adapter
+        w = GlassWindow()
+        w.resize(380 + 2 * SHADOW_BLEED, 300 + 2 * SHADOW_BLEED)
+        w.show()
+        app.processEvents()
+        wid = int(w.winId())
+        window = objc.objc_object(c_void_p=wid).window()
+
+        def effects():
+            return [
+                v for v in window.contentView().superview().subviews()
+                if v.identifier() == "tilelens.backdrop"
+            ]
+
+        def rect(view):
+            f = view.frame()
+            return (f.origin.x, f.origin.y, f.size.width, f.size.height)
+
+        (view,) = effects()
+        out = [w.native_blur, w.devicePixelRatioF() >= 1.0]
+        out += [rect(view) == (SHADOW_BLEED, SHADOW_BLEED, 380, 300)]
+        out += [view.layer().cornerRadius() == w.radius]
+        w.resize(450 + 2 * SHADOW_BLEED, 330 + 2 * SHADOW_BLEED)
+        app.processEvents()
+        out += [rect(effects()[0]) == (SHADOW_BLEED, SHADOW_BLEED, 450, 330), len(effects()) == 1]
+        out += [adapter.clear_backdrop(wid), effects() == []]
+        print("RESULT", out)
+        w.close()
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "QT_QPA_PLATFORM": "cocoa"},
+    )
+    assert "RESULT [True, True, True, True, True, True, True, True]" in proc.stdout, (
+        proc.stdout + proc.stderr
+    )
 
 
 def test_permission_gate_blocks_and_rechecks():

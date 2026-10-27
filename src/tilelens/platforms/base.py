@@ -61,5 +61,23 @@ class PlatformAdapter(ABC):
         """Keep a window visible over full-screen apps, where the OS supports it."""
         return False
 
+    def apply_backdrop(self, win_id: int, radius: float, dark: bool, inset: float = 0.0) -> bool:
+        """Blur what is behind a frameless translucent window, clipped to a rounded rectangle.
+
+        radius is the corner radius in points and inset the margin between the window edge and
+        the blurred shape (room the window keeps for its shadow). Safe to call again to change
+        either. Call it once the window has its final size and again after every resize: macOS
+        stretches the blur with the window but Windows cuts it to a fixed shape. Returns False
+        when the platform has no such effect; the caller then paints a more opaque fill instead.
+
+        On Windows the window itself is cut to the glass shape, so anything painted in the inset
+        (a shadow) is not shown and the corners are not anti-aliased.
+        """
+        return False
+
+    def clear_backdrop(self, win_id: int) -> bool:
+        """Remove what apply_backdrop added. True if something was removed."""
+        return False
+
     def close(self) -> None:  # noqa: B027
         pass
