@@ -500,3 +500,14 @@ def test_real_windows_stay_blurred_excluded_and_on_every_space():
         env={**os.environ, "QT_QPA_PLATFORM": "cocoa"},
     )
     assert "RESULT 9 True" in proc.stdout, proc.stdout + proc.stderr
+
+
+def test_the_app_keeps_running_when_its_windows_close(qapp):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
+
+    from tilelens.ui import app_main
+
+    QTimer.singleShot(400, QApplication.quit)
+    assert app_main.run(demo=True) == 0
+    assert QApplication.quitOnLastWindowClosed() is False

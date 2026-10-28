@@ -257,6 +257,7 @@ class App:
 def run(argv: list[str] | None = None, demo: bool = False) -> int:
     app = QApplication.instance() or QApplication(argv or sys.argv[:1])
     app.setApplicationName("TileLens")
+    app.setQuitOnLastWindowClosed(False)
     if demo:
         import tempfile
         from pathlib import Path
