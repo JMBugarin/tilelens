@@ -770,11 +770,11 @@ def test_glass_window_asks_the_platform_for_a_backdrop(qapp, monkeypatch):
     win.backdrop = native
     win.show()
     assert calls and calls[0][0] == int(win.winId())
-    assert calls[0][1] == 26 and calls[0][2] is True
+    assert calls[0][1] == 20 and calls[0][2] is True
     assert calls[0][3] == SHADOW_BLEED
     assert win.native_blur
     win.set_material(LIGHT)
-    assert calls[-1][2] is False and calls[-1][1] == 26 and calls[-1][3] == SHADOW_BLEED
+    assert calls[-1][2] is False and calls[-1][1] == 20 and calls[-1][3] == SHADOW_BLEED
     translucent = pixels(win)
     win.set_solid(True)
     assert not win.native_blur
@@ -793,7 +793,7 @@ def test_glass_window_still_takes_a_three_argument_hook(qapp):
     win.resize(200, 200)
     win.backdrop = older
     win.show()
-    assert calls == [(26, True)] and win.native_blur
+    assert calls == [(20, True)] and win.native_blur
     win.resize(240, 220)
     assert len(calls) == 2
     win.hide()
@@ -824,7 +824,7 @@ def test_glass_window_asks_again_when_it_resizes_while_shown(qapp):
     QApplication.processEvents()
     assert len(calls) == 1
     win.resize(300, 260)
-    assert len(calls) == 2 and calls[-1][1:] == (26.0, True, float(SHADOW_BLEED))
+    assert len(calls) == 2 and calls[-1][1:] == (20.0, True, float(SHADOW_BLEED))
     win.resize(300, 260)
     assert len(calls) == 2
     win.set_glass_width(400)
@@ -893,7 +893,7 @@ def test_glass_window_takes_an_adapter_object_or_its_bound_method(qapp):
         win.resize(200, 200)
         win.backdrop = use(adapter)
         win.show()
-        assert adapter.calls == [(int(win.winId()), 26.0, True, float(SHADOW_BLEED))]
+        assert adapter.calls == [(int(win.winId()), 20.0, True, float(SHADOW_BLEED))]
         assert win.native_blur
         win.hide()
     plain = RecordingAdapter(answer=False)
@@ -1054,7 +1054,7 @@ def test_glass_window_blurs_a_real_macos_window_and_follows_its_resizes():
         content, found = effects()
         view = found[0]
         frame = view.frame()
-        out = [win.native_blur, len(found) == 1, view.layer().cornerRadius() == 26.0]
+        out = [win.native_blur, len(found) == 1, view.layer().cornerRadius() == 20.0]
         out += [(frame.origin.x, frame.origin.y) == (SHADOW_BLEED, SHADOW_BLEED)]
         win.resize(400, 260)
         pump()

@@ -662,12 +662,13 @@ class GlassCard(_ButtonBase):
         wash = mix(
             mix(m.fill, m.fill_hover, self._hover_value()), m.fill_press, self._press_value()
         )
-        paint_wash(p, r, radius, dim(wash, en))
+        rest = self._hover_value() + self._press_value()
+        paint_wash(p, r, radius, dim(scaled_alpha(wash, min(1.0, rest * 1.5)), en))
         if sel > 0.0:
-            lens = rgba(255, 255, 255, 0.10) if m.dark else rgba(255, 255, 255, 0.78)
+            lens = rgba(255, 255, 255, 0.08) if m.dark else rgba(255, 255, 255, 0.55)
             paint_wash(p, r, radius, dim(scaled_alpha(lens, sel), en))
             paint_wash(
-                p, r, radius, dim(with_alpha(m.accent, (0.22 if m.dark else 0.10) * sel), en)
+                p, r, radius, dim(with_alpha(m.accent, (0.14 if m.dark else 0.07) * sel), en)
             )
             sheen = QLinearGradient(r.topLeft(), QPointF(r.left(), r.top() + r.height() * 0.6))
             sheen.setColorAt(0, rgba(255, 255, 255, (0.12 if m.dark else 0.55) * sel))
@@ -675,14 +676,13 @@ class GlassCard(_ButtonBase):
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(sheen)
             p.drawRoundedRect(r, radius, radius)
-        paint_control_rim(p, r, radius, m, (1.0 - sel) * (1.0 if en else 0.5))
         if sel > 0.0:
             paint_wash(
                 p,
                 r,
                 radius,
                 QColor(0, 0, 0, 0),
-                dim(with_alpha(m.accent, (0.85 if m.dark else 0.80) * sel), en),
+                dim(with_alpha(m.accent, (0.55 if m.dark else 0.50) * sel), en),
             )
         if self._ring:
             paint_focus_ring(p, r, radius, scaled_alpha(m.text, 0.7))

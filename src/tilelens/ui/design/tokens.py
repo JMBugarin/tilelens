@@ -42,10 +42,10 @@ class Space:
 class Radius:
     """Concentric: a child's radius is its parent's radius minus the gap between them."""
 
-    CONTROL = 12
-    CARD = 18
-    SHEET = 22
-    PANEL = 26
+    CONTROL = 10
+    CARD = 12
+    SHEET = 18
+    PANEL = 20
 
 
 class Motion:
@@ -88,13 +88,13 @@ class Material:
 DARK = Material(
     name="dark",
     dark=True,
-    tint_top=rgba(52, 58, 76, 0.50),
-    tint_bottom=rgba(20, 24, 38, 0.62),
-    solid_top=rgba(40, 46, 64, 0.92),
-    solid_bottom=rgba(18, 22, 36, 0.95),
-    rim_top=rgba(255, 255, 255, 0.46),
+    tint_top=rgba(60, 68, 88, 0.22),
+    tint_bottom=rgba(26, 32, 48, 0.34),
+    solid_top=rgba(44, 52, 72, 0.74),
+    solid_bottom=rgba(22, 28, 44, 0.82),
+    rim_top=rgba(255, 255, 255, 0.70),
     rim_mid=rgba(255, 255, 255, 0.07),
-    rim_bottom=rgba(255, 255, 255, 0.20),
+    rim_bottom=rgba(255, 255, 255, 0.34),
     edge=rgba(0, 0, 0, 0.34),
     shadow=rgba(2, 6, 18, 1.0),
     text=rgba(255, 255, 255, 0.96),
@@ -114,10 +114,10 @@ DARK = Material(
 LIGHT = Material(
     name="light",
     dark=False,
-    tint_top=rgba(255, 255, 255, 0.62),
-    tint_bottom=rgba(240, 244, 252, 0.52),
-    solid_top=rgba(252, 253, 255, 0.94),
-    solid_bottom=rgba(236, 240, 248, 0.95),
+    tint_top=rgba(255, 255, 255, 0.34),
+    tint_bottom=rgba(244, 247, 255, 0.24),
+    solid_top=rgba(252, 253, 255, 0.78),
+    solid_bottom=rgba(238, 242, 250, 0.72),
     rim_top=rgba(255, 255, 255, 0.95),
     rim_mid=rgba(255, 255, 255, 0.30),
     rim_bottom=rgba(255, 255, 255, 0.70),

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Hashable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 
 from PySide6.QtCore import QPointF, QRectF, QSizeF, Qt
@@ -30,11 +30,12 @@ from tilelens.solver.movegen import Move
 from tilelens.state.memory import Coverage
 from tilelens.state.names import square_name
 from tilelens.ui.design.material import Elevation, paint_glass, paint_shadow
-from tilelens.ui.design.tokens import DARK, MATERIALS, Material, type_font, with_alpha
+from tilelens.ui.design.tokens import DARK, MATERIALS, Material, rgba, type_font, with_alpha
 
 GUIDE_MODES = ("auto", "always", "off")
 GUIDE_HOLD_MS = 1400
 
+SMOKE = replace(DARK, solid_top=rgba(40, 46, 64, 0.92), solid_bottom=rgba(18, 22, 36, 0.95))
 CYAN = DARK.accent
 GREEN = DARK.success
 AMBER = DARK.warning
@@ -272,7 +273,7 @@ def _tile_glass(w_px: int, h_px: int, dpr: float, radius_q: int) -> QImage:
     w, h, radius = w_px / dpr, h_px / dpr, radius_q / 16
     off = pad_px / dpr
     rect = QRectF(off, off, w, h)
-    paint_glass(p, rect, radius, DARK, blur=False, strength=1.0)
+    paint_glass(p, rect, radius, SMOKE, blur=False, strength=1.0)
     clip = QPainterPath()
     clip.addRoundedRect(rect, radius, radius)
     p.setClipPath(clip)
@@ -327,7 +328,7 @@ def _bar_glass(w_px: int, h_px: int, dpr: float) -> QImage:
     halo = QPainterPath()
     halo.addRoundedRect(rect.adjusted(-1, -1, 1, 1), h / 2 + 1, h / 2 + 1)
     p.fillPath(halo, with_alpha(DARK.rim_top, 0.30))
-    paint_glass(p, rect, h / 2, DARK, blur=False, strength=1.0, rim=False, sheen=False)
+    paint_glass(p, rect, h / 2, SMOKE, blur=False, strength=1.0, rim=False, sheen=False)
     p.end()
     return img
 

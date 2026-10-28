@@ -18,6 +18,7 @@ PERMISSION_HELP = (
 
 BACKDROP_ID = "tilelens.backdrop"
 MATERIAL = "HUDWindow"
+BLUR_ALPHA = 0.55
 _MIN_POINTER = 0x10000  # Qt's offscreen platform hands out small counters, not NSView pointers
 
 
@@ -97,6 +98,8 @@ def apply_backdrop(win_id: int, radius: float, dark: bool, inset: float = 0.0) -
             effect.setIdentifier_(BACKDROP_ID)
             effect.setBlendingMode_(NSVisualEffectBlendingModeBehindWindow)
             effect.setState_(NSVisualEffectStateActive)
+            if hasattr(effect, "setAlphaValue_"):
+                effect.setAlphaValue_(BLUR_ALPHA)
             effect.setMaterial_(getattr(AppKit, f"NSVisualEffectMaterial{MATERIAL}"))
             effect.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
             effect.setWantsLayer_(True)
