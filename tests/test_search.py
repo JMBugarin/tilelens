@@ -60,6 +60,20 @@ def test_dawg_cache(tmp_path, monkeypatch):
     assert load_or_build(["EMU"], "abc").words() == ["EMU"]
 
 
+def test_dawg_cache_rebuilds_damaged_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("TILELENS_CACHE", str(tmp_path))
+    path = tmp_path / "dawg-abc.npz"
+    load_or_build(["CAT", "CATS", "DOG"], "abc")
+    good = path.read_bytes()
+    damaged = [good[:n] for n in range(0, len(good), max(1, len(good) // 40))]
+    damaged += [good[:i] + bytes([good[i] ^ 0xFF]) + good[i + 1 :] for i in range(0, len(good), 7)]
+    for data in damaged:
+        path.write_bytes(data)
+        words = load_or_build(["EMU"], "abc").words()
+        assert words in (["CAT", "CATS", "DOG"], ["EMU"])
+        assert Dawg.load(path).words() == words
+
+
 # hand-checked search results
 
 

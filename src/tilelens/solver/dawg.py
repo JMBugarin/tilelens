@@ -158,7 +158,9 @@ def load_or_build(words: Iterable[str], version: str, use_cache: bool = True) ->
             dawg = Dawg.load(path)
             if dawg.version == version:
                 return dawg
-        except (OSError, ValueError, KeyError):
+        except Exception:
+            # A damaged cache (truncated zip, bad deflate stream, missing array) raises
+            # many different errors; the cache is only a speedup, so rebuild instead.
             pass
     dawg = Dawg.build(words, version)
     try:
