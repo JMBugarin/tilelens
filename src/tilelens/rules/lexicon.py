@@ -62,6 +62,9 @@ class Lexicon:
             raise WordListError(f"word list not found: {path}") from None
         except UnicodeDecodeError:
             raise WordListError(f"word list is not UTF-8 text: {path}") from None
+        except OSError as exc:
+            # A folder or an unreadable file; callers such as the GUI only expect WordListError.
+            raise WordListError(f"word list could not be read: {path} ({exc.strerror})") from None
         lex = cls.from_words(text.splitlines(), alphabet, source=path)
         if not lex.words:
             raise WordListError(f"word list has no usable words: {path}")

@@ -102,6 +102,8 @@ def test_lexicon_load(tmp_path):
     p.write_bytes(b"\xff\xfe\x00bad")
     with pytest.raises(WordListError, match="UTF-8"):
         Lexicon.load(p)
+    with pytest.raises(WordListError, match="could not be read"):
+        Lexicon.load(tmp_path)
 
 
 # legality
