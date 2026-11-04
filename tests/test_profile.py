@@ -84,6 +84,15 @@ def test_missing_file(tmp_path):
         load_profile(tmp_path / "nope.toml")
 
 
+def test_unreadable_file(tmp_path):
+    with pytest.raises(ProfileError, match="could not be read"):
+        load_profile(tmp_path)
+    p = tmp_path / "latin1.toml"
+    p.write_bytes(b'name = "caf\xe9"\n')
+    with pytest.raises(ProfileError, match="not UTF-8"):
+        load_profile(p)
+
+
 def test_bad_toml(tmp_path):
     p = tmp_path / "bad.toml"
     p.write_text("name = ")

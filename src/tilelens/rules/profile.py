@@ -145,6 +145,11 @@ def load_profile(path: str | Path) -> Profile:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise ProfileError(["file not found"], path) from None
+    except UnicodeDecodeError:
+        raise ProfileError(["not UTF-8 text"], path) from None
+    except OSError as exc:
+        # A folder or an unreadable file; callers such as the GUI only expect ProfileError.
+        raise ProfileError([f"could not be read ({exc.strerror})"], path) from None
     except tomllib.TOMLDecodeError as exc:
         raise ProfileError([f"invalid TOML: {exc}"], path) from None
     profile = parse_profile(data, source=path)
