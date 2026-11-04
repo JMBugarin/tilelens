@@ -48,6 +48,7 @@ from tilelens.vision.recognizer import (
     Reading,
     Recognizer,
     premium_key,
+    tile_like,
 )
 from tilelens.vision.values import MAX_STAMP, ValueVotes, tile_value
 
@@ -75,6 +76,10 @@ STAR_FRACTION = 0.015
 EXTENT_EVERY = 0.7  # seconds between measurements of the board's edges
 LIGHT_INK = 60.0
 STAMP_LETTER_MIN = 0.9  # only a tile whose letter is certain is stamped
+OBSTRUCTION_GRID = (96, 54)  # columns and rows of the screen-space map
+OBSTRUCTION_HEAT = 1.5
+OBSTRUCTION_MAX = 8.0
+OBSTRUCTION_DECAY = 0.93
 DEFAULT_RACK_ZONE = (0.0, 1.0, 0.35, 1.0)  # whole width: the game window can sit anywhere
 
 
@@ -381,6 +386,39 @@ def _covered_by(grid, rows: int, cols: int, rects) -> np.ndarray:
     return out
 
 
+class ObstructionMap:
+    """Where on the screen something other than the game keeps lying over the board.
+
+    The game's own panels and buttons stay where they are while the board moves under them, and
+    other windows (Discord's own interface, another app) lie over everything. Squares that were
+    taken for foreign again and again are remembered in screen coordinates, so they are skipped
+    at once, are not learned from, and are forgotten again soon after the thing moves away."""
+
+    def __init__(self) -> None:
+        cols, rows = OBSTRUCTION_GRID
+        self.heat = np.zeros((rows, cols), np.float32)
+
+    def _slice(self, rect, size):
+        cols, rows = OBSTRUCTION_GRID
+        x, y, w, h = rect
+        fw, fh = size
+        x0, x1 = int(max(0, x) * cols / fw), int(np.ceil(min(fw, x + w) * cols / fw))
+        y0, y1 = int(max(0, y) * rows / fh), int(np.ceil(min(fh, y + h) * rows / fh))
+        return slice(y0, max(y0 + 1, y1)), slice(x0, max(x0 + 1, x1))
+
+    def decay(self) -> None:
+        self.heat *= OBSTRUCTION_DECAY
+
+    def mark(self, rect, size) -> None:
+        ys, xs = self._slice(rect, size)
+        self.heat[ys, xs] = np.minimum(OBSTRUCTION_MAX, self.heat[ys, xs] + 1.0)
+
+    def blocked(self, rect, size) -> bool:
+        ys, xs = self._slice(rect, size)
+        area = self.heat[ys, xs]
+        return bool(area.size) and float((area >= OBSTRUCTION_HEAT).mean()) >= 0.6
+
+
 class ViewReader:
     """Locates the board each time it moves and reads every visible square."""
 
@@ -402,6 +440,8 @@ class ViewReader:
             else calibration.rack_proto.mean[:3]
         )
         self.locates = 0
+        self.obstructions = ObstructionMap()
+        self.sanitized = self.cal.sanitize()
         self._extent_at = 0.0
         self.hint = BoardHint()
         self.starts = {tuple(sq) for sq in profile.start_squares}
@@ -531,6 +571,8 @@ class ViewReader:
         if rev != self._cache_rev:
             self._cache, self._cache_rev = {}, rev
         fresh: dict[int, tuple] = {}
+        frame_size = (img.shape[1], img.shape[0])
+        self.obstructions.decay()
         for r in range(rows):
             row = []
             for c in range(cols):
@@ -538,6 +580,10 @@ class ViewReader:
                     row.append(CellRead(state=UNSEEN))
                     continue
                 key = r * cols + c
+                frame_rect = grid.cell_rect(r, c)
+                if self.obstructions.blocked(frame_rect, frame_size):
+                    row.append(CellRead(state=UNSEEN, foreign=True))
+                    continue
                 raw = crop(board_img, board_grid.cell_rect(r, c)).copy()
                 hit = self._cache.get(key)
                 if hit is not None and hit[0].shape == raw.shape and np.array_equal(hit[0], raw):
@@ -557,6 +603,8 @@ class ViewReader:
                 feats[r, c] = feat
                 crops[key] = crop_
                 fresh[key] = (raw, feat, crop_, replace(cell))
+                if cell.foreign:
+                    self.obstructions.mark(frame_rect, frame_size)
                 row.append(cell)
             cells.append(row)
         self._cache = fresh
@@ -651,6 +699,10 @@ class ViewReader:
     def _read_cell(self, r: int, c: int, feat: np.ndarray, crop_: np.ndarray) -> CellRead:
         ring_d = float(np.linalg.norm(feat[:3] - self.expected[r, c]))
         ring_ok = ring_d < RING_OK
+        if not ring_ok and not tile_like(feat[:3]):
+            # dark: Discord's dark theme, another window, the letterbox. Never a tile's color,
+            # whatever is written on it.
+            return CellRead(state=UNSEEN, foreign=True)
         if ring_ok and (r, c) in self.starts and has_star(crop_):
             # the square still has its own color and shows violet: the spinning star that
             # marks where the first word goes, never a letter
@@ -699,7 +751,7 @@ class ViewReader:
         if not ring_ok and self._rack_look(feat) and float(glyph.ink[0]) > LIGHT_INK:
             # a rack tile's color with its light lettering is a rack tile or a button in the
             # game's interface (PASS TURN), never a tile that has been played on the board
-            return CellRead(state=UNSEEN)
+            return CellRead(state=UNSEEN, foreign=True)
         if not ring_ok and not self._tile_background(feat):
             # neither the square's color nor a known tile color: a tile in a new color (it
             # carries a point value) is asked about once; anything else covers the square
@@ -827,11 +879,18 @@ class ViewReader:
         self.board_fixes.clear()
         self.stamp_memory.clear()
 
-    def consolidate(self, reading: Reading, per_letter: int = 3, confirmed: bool = False) -> int:
+    def consolidate(
+        self,
+        reading: Reading,
+        per_letter: int = 3,
+        confirmed: bool = False,
+        cells: set | None = None,
+    ) -> int:
         """Keep board shapes of letters from a fully confirmed reading.
 
         Board tiles are then matched against board tiles, which is stricter and more accurate
-        than matching them against rack or chart shapes. Only a few per letter are kept.
+        than matching them against rack or chart shapes. Only a few per letter are kept. With
+        cells, only those squares are learned from (the ones inside valid words).
         """
         if not (confirmed or reading.confident) or reading.crops is None:
             return 0
@@ -840,6 +899,8 @@ class ViewReader:
         for r, row in enumerate(reading.cells):
             for c, cell in enumerate(row):
                 if not cell.letter or cell.blank or cell.uncertain or cell.state == UNSEEN:
+                    continue
+                if cells is not None and (r, c) not in cells:
                     continue
                 if len(self.cal.templates.get(cell.letter, ())) >= per_letter:
                     continue

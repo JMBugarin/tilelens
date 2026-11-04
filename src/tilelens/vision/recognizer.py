@@ -89,6 +89,15 @@ def premium_key(profile: Profile, row: int, col: int) -> str:
     return key + ("*" if (row, col) in set(profile.start_squares) else "")
 
 
+DARK_L = 45.0  # a tile is never this dark: black, charcoal and dark gray are interface colors
+
+
+def tile_like(lab: np.ndarray) -> bool:
+    """Could this color be a tile's background? Dark colors are the interface (Discord's
+    dark theme, another window, the letterbox), whatever is written on them."""
+    return float(lab[0]) >= DARK_L
+
+
 @dataclass
 class Calibration:
     profile_fingerprint: str
@@ -115,10 +124,20 @@ class Calibration:
 
     def add_tile_background(self, lab: np.ndarray, close: float = 10.0) -> bool:
         lab = np.asarray(lab, np.float32)[:3]
+        if not tile_like(lab):
+            return False
         if any(float(np.linalg.norm(lab - t)) < close for t in self.tile_backgrounds):
             return False
         self.tile_backgrounds.append(lab)
         return True
+
+    def sanitize(self) -> int:
+        """Forget tile colors that no tile has: a window or panel once taken for tiles teaches
+        its dark background as one, after which its text reads as letters. Returns how many."""
+        keep = [t for t in self.tile_backgrounds if tile_like(t)]
+        dropped = len(self.tile_backgrounds) - len(keep)
+        self.tile_backgrounds = keep
+        return dropped
 
     def add_empty_glyph(self, key: str, vec: np.ndarray) -> None:
         bucket = self.empty_glyphs.setdefault(key, [])
@@ -196,7 +215,11 @@ class Calibration:
             empty_glyphs={k: [dec(s) for s in vs] for k, vs in d.get("empty_glyphs", {}).items()},
             masks=[tuple(m) for m in d.get("masks", [])],
             auto=bool(d.get("auto", False)),
-            tile_backgrounds=[np.array(t, np.float32) for t in d.get("tile_backgrounds", [])],
+            tile_backgrounds=[
+                np.array(t, np.float32)
+                for t in d.get("tile_backgrounds", [])
+                if tile_like(np.array(t, np.float32))
+            ],
             label_ink=(
                 None if d.get("label_ink") is None else np.array(d["label_ink"], np.float32)
             ),
@@ -249,6 +272,7 @@ class CellRead:
     candidates: tuple[str, ...] = ()
     value: int | None = None  # the number printed on a played tile
     star: bool = False  # the purple star that marks an unplayed start square
+    foreign: bool = False  # something that is not the game lies over this square
 
 
 @dataclass
