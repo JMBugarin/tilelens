@@ -42,16 +42,30 @@ class Settings:
             data = json.loads(path.read_text())
         except (OSError, ValueError):
             return cls()
+        # A damaged or hand-edited file must not stop the app from starting.
+        if not isinstance(data, dict):
+            return cls()
         s = cls()
         for key, value in data.items():
             if hasattr(s, key):
                 setattr(s, key, value)
         merged = dict(DEFAULT_SHORTCUTS)
-        merged.update({k: v for k, v in (s.shortcuts or {}).items() if k in DEFAULT_SHORTCUTS})
+        if isinstance(s.shortcuts, dict):
+            merged.update(
+                {
+                    k: v
+                    for k, v in s.shortcuts.items()
+                    if k in DEFAULT_SHORTCUTS and isinstance(v, str)
+                }
+            )
         s.shortcuts = merged
         if s.overlay_mode not in OVERLAY_MODES:
             s.overlay_mode = "exclude"
-        s.hz = min(12.0, max(8.0, float(s.hz)))
+        try:
+            hz = float(s.hz)
+        except (TypeError, ValueError):
+            hz = cls.hz
+        s.hz = min(12.0, max(8.0, hz))
         return s
 
     def save(self, path: Path | None = None) -> None:
