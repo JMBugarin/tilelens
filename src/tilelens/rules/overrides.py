@@ -54,14 +54,19 @@ class Overrides:
             return cls(path)
         except (OSError, ValueError) as exc:
             raise OverrideError(f"cannot read word overrides {path}: {exc}") from None
-        if data.get("format") != FORMAT:
+        if not isinstance(data, dict) or data.get("format") != FORMAT:
             raise OverrideError(f"{path}: not a {FORMAT} file")
         out = cls(path, str(data.get("game", "")))
         for kind in ("allow", "block"):
-            for word, entry in (data.get(kind) or {}).items():
+            words = data.get(kind) or {}
+            if not isinstance(words, dict):
+                raise OverrideError(f"{path}: '{kind}' must map each word to its evidence")
+            for word, entry in words.items():
                 key = word.upper()
                 if not WORD.match(key):
                     raise OverrideError(f"{path}: '{word}' is not a word")
+                if entry is not None and not isinstance(entry, dict):
+                    raise OverrideError(f"{path}: the entry for '{word}' must be an object")
                 getattr(out, kind)[key] = dict(entry or {})
         both = set(out.allow) & set(out.block)
         if both:

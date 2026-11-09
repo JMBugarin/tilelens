@@ -181,6 +181,25 @@ def test_a_damaged_overrides_file_is_reported_not_ignored(tmp_path):
         lexicon_for(profile, words)
 
 
+@pytest.mark.parametrize(
+    "data",
+    [
+        [],
+        None,
+        "tilelens-word-overrides",
+        {"format": "tilelens-word-overrides", "allow": ["UN"]},
+        {"format": "tilelens-word-overrides", "block": "UN"},
+        {"format": "tilelens-word-overrides", "allow": {"UN": "seen in game"}},
+        {"format": "tilelens-word-overrides", "block": {"UN": 5}},
+    ],
+)
+def test_an_overrides_file_of_the_wrong_shape_is_reported_not_a_crash(tmp_path, data):
+    path = tmp_path / "game.overrides.json"
+    path.write_text(json.dumps(data))
+    with pytest.raises(OverrideError):
+        Overrides.load(path)
+
+
 def test_command_line_records_checks_and_forgets(tmp_path, monkeypatch, capsys):
     import shutil
 
