@@ -118,7 +118,12 @@ class Settings:
             self.reduce_motion = False
         if not isinstance(self.panel_compact, bool):
             self.panel_compact = False
-        hz = _number(self.hz)
+        try:
+            hz = None if isinstance(self.hz, bool) else float(self.hz)
+        except (TypeError, ValueError):
+            hz = None
+        if hz is not None and not math.isfinite(hz):
+            hz = None
         self.hz = min(HZ_RANGE[1], max(HZ_RANGE[0], hz)) if hz is not None else 10.0
 
     def save(self, path: Path | None = None) -> None:
