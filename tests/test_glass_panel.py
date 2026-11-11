@@ -3,16 +3,19 @@ import os
 
 import pytest
 
+pytestmark = pytest.mark.gui
+pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QPoint  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tilelens.solver.movegen import SearchResult
-from tilelens.state.controller import HELD, WAITING, Snapshot, Status
-from tilelens.state.memory import Coverage
-from tilelens.ui.design import DARK, LIGHT, SHADOW_BLEED, Appearance, set_reduce_motion
-from tilelens.ui.glass_panel import GlassPanel, age_text, view_of
+from tilelens.solver.movegen import SearchResult  # noqa: E402
+from tilelens.state.controller import HELD, WAITING, Snapshot, Status  # noqa: E402
+from tilelens.state.memory import Coverage  # noqa: E402
+from tilelens.ui.design import DARK, LIGHT, SHADOW_BLEED, Appearance, set_reduce_motion  # noqa: E402
+from tilelens.ui.glass_panel import GlassPanel, age_text, view_of  # noqa: E402
 
 
 @pytest.fixture(scope="module")

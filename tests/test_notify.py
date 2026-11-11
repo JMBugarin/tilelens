@@ -1,16 +1,19 @@
 import pytest
-from PySide6.QtCore import QRect, QRectF, Qt
-from PySide6.QtWidgets import QApplication, QWidget
 
-from tilelens.ui import notify
-from tilelens.ui.design import (
+pytestmark = pytest.mark.gui
+pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
+from PySide6.QtCore import QRect, QRectF, Qt  # noqa: E402
+from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
+
+from tilelens.ui import notify  # noqa: E402
+from tilelens.ui.design import (  # noqa: E402
     DARK,
     LIGHT,
     Appearance,
     set_default_material,
     set_reduce_motion,
 )
-from tilelens.ui.notify import MIN_VISIBLE_MS, Toast, ToastManager
+from tilelens.ui.notify import MIN_VISIBLE_MS, Toast, ToastManager  # noqa: E402
 
 
 @pytest.fixture(scope="module")

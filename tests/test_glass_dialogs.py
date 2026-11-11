@@ -6,24 +6,27 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.gui
+pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPointF, QRect, Qt
-from PySide6.QtGui import QKeyEvent, QMouseEvent
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtCore import QPointF, QRect, Qt  # noqa: E402
+from PySide6.QtGui import QKeyEvent, QMouseEvent  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
-from tilelens.ui.calibrate_dialog import CalibrationDialog, RectPicker
-from tilelens.ui.corrections import CorrectionDialog
-from tilelens.ui.design import DARK, LIGHT, GlassButton, set_reduce_motion
-from tilelens.ui.glass_dialog import (
+from tilelens.ui.calibrate_dialog import CalibrationDialog, RectPicker  # noqa: E402
+from tilelens.ui.corrections import CorrectionDialog  # noqa: E402
+from tilelens.ui.design import DARK, LIGHT, GlassButton, set_reduce_motion  # noqa: E402
+from tilelens.ui.glass_dialog import (  # noqa: E402
     GlassDialog,
     LetterField,
     Notice,
     RackField,
     Steps,
 )
-from tilelens.ui.region_select import RegionSelector
+from tilelens.ui.region_select import RegionSelector  # noqa: E402
 
 ROOM = QRect(0, 0, 1440, 900)
 

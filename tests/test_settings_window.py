@@ -4,29 +4,32 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
 
-from tilelens.capture.source import CallableSource
-from tilelens.platforms.base import Region
-from tilelens.state.controller import Snapshot, Status
-from tilelens.state.memory import Coverage
-from tilelens.synth.game import FakeGame
-from tilelens.ui.design import (
+pytestmark = pytest.mark.gui
+pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
+from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from tilelens.capture.source import CallableSource  # noqa: E402
+from tilelens.platforms.base import Region  # noqa: E402
+from tilelens.state.controller import Snapshot, Status  # noqa: E402
+from tilelens.state.memory import Coverage  # noqa: E402
+from tilelens.synth.game import FakeGame  # noqa: E402
+from tilelens.ui.design import (  # noqa: E402
     DARK,
     reduce_motion,
     set_default_material,
     set_reduce_motion,
 )
-from tilelens.ui.main_window import (
+from tilelens.ui.main_window import (  # noqa: E402
     MODES,
     SHORTCUT_LABELS,
     MainWindow,
     shortcut_text,
     view_box,
 )
-from tilelens.ui.session import LiveSession
-from tilelens.ui.settings import (
+from tilelens.ui.session import LiveSession  # noqa: E402
+from tilelens.ui.settings import (  # noqa: E402
     DEFAULT_SHORTCUTS,
     Settings,
     clean_offset,
