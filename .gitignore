@@ -23,3 +23,6 @@ deployment/
 *.onefile-build/
 packaging/*.bin
 packaging/*.app
+
+# raw captures of the real game can show other windows; review and crop before sharing
+benchmarks/real/raw/

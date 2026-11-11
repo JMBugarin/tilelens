@@ -9,14 +9,15 @@ older position is never shown.
 | --- | --- |
 | Reading | The board changed and is being re-read, or it has not stopped changing yet. "Waiting for board" means tiles are placed but not submitted, or a tile is being dragged. "Aligning" means the board moved (zoom, pan, resize) and is being found again. |
 | Solving | The position is stable and confirmed; the search runs in the worker process. |
-| Ready | The cards show the top placements for exactly the position on screen. A **notice** under the cards says when a tile is unsure or a letter was settled by the word list; the cards stay live. |
-| Holding | You clicked a card. The suggestion and its ghost tiles stay frozen while you place your tiles, and tracking resumes by itself when the rack refills. |
-| Check tiles | Only for what cannot be worked around: a board size change, a rack tile with no readable letter, more copies of a letter than the set holds. The correction grid shows what. |
+| Ready | The cards show the top placements for exactly the position on screen. A **banner** under the cards says when a tile is unsure or a letter was settled by the word list; the cards stay live. |
+| Holding | You clicked a card (or chose it with Ctrl+Shift+1, 2 or 3). The suggestion and its ghost tiles stay frozen while you place your tiles, and tracking resumes by itself when the rack refills. |
+| Check tiles | Only for what cannot be worked around: a board size change, a rack tile with no readable letter, more copies of a letter than the set holds. The check dialog lists the squares that need an answer. |
 | Paused | Capturing is stopped and the search is cancelled. |
 | Game not visible | Capture failed (often a missing permission) or the board is not in view. |
 
-The panel names these as Tracking, Aligning, Reading rack, Calculating, Holding, Check one tile
-and Board obscured, each with the action to take.
+The panel names these as Tracking, Aligning, Reading rack, Calculating, Holding, Check tiles
+and Board obscured, each with the action to take, as one banner under the cards. Its pill is the
+only thing that animates, and only while a read or search has no result to show.
 
 ## Unclear tiles do not stop the cards
 
@@ -33,7 +34,8 @@ When a tile is unclear the loop works in this order before it asks anything:
 4. **Walls and guesses.** What is still unclear after about 0.6 s (so animations and hover
    states can pass) is carried on: an unclear board square becomes a wall that no suggestion
    may touch, and an unclear rack tile keeps its best guess. The panel then shows the best
-   candidates as letter buttons; one tap teaches the tile and the position is read again.
+   candidates as letter buttons and the overlay rings that tile in amber; one tap teaches the
+   tile and the position is read again. Nothing is asked while a play is held.
 
 ## Holding a suggestion
 
@@ -90,13 +92,14 @@ found), and the rack is looked for across the lower part of it. The change check
     remembered squares are dropped;
   - a change in view that you did not make starts a new record, and panning or zooming fills
     it in.
-- **Coverage** is shown with every result:
-  - *Board aligned*: the whole board is in view.
-  - *Partial view · tracking*: every square is in view or remembered. The result is the best
+- **Coverage** is shown with every result. The overlay's brackets flash when the board is
+  found and stay only while the view is partial:
+  - *whole board in view*: nothing to say; the brackets fade out.
+  - *Partial view, tracking*: every square is in view or remembered. The result is the best
     on the whole board.
-  - *Partial view · zoom out briefly*: some squares are unknown. They are walls for the search,
+  - *Partial view, zoom out briefly*: some squares are unknown. They are walls for the search,
     so every move shown is legal and scored correctly, but it is only the best among the
-    squares in view. Zooming out once fixes this.
+    squares in view. The panel says so; zooming out once fixes this.
 - **Steady results.** While a result is shown, a new frame that contradicts nothing keeps it
   in view: zooming, panning, unclear reads of known tiles, and tiles the player moves out of
   the rack (dragged, or placed but not submitted) do not clear it. The panel then says the

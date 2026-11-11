@@ -16,11 +16,13 @@ from tilelens.rules.profile import BLANK, Profile
 from tilelens.vision.cells import (
     CROP,
     PATCH,
+    RING,
     Blob,
     corner_mark_ink,
     crop,
     extract_glyph,
     find_tile_blobs,
+    median_over,
     patch_features,
     to_lab,
 )
@@ -48,6 +50,7 @@ from tilelens.vision.recognizer import (
     Reading,
     Recognizer,
     premium_key,
+    tile_like,
 )
 from tilelens.vision.values import MAX_STAMP, ValueVotes, tile_value
 
@@ -75,7 +78,21 @@ STAR_FRACTION = 0.015
 EXTENT_EVERY = 0.7  # seconds between measurements of the board's edges
 LIGHT_INK = 60.0
 STAMP_LETTER_MIN = 0.9  # only a tile whose letter is certain is stamped
+OBSTRUCTION_GRID = (96, 54)  # columns and rows of the screen-space map
+OBSTRUCTION_HEAT = 1.5
+OBSTRUCTION_MAX = 8.0
+OBSTRUCTION_DECAY = 0.93
 DEFAULT_RACK_ZONE = (0.0, 1.0, 0.35, 1.0)  # whole width: the game window can sit anywhere
+
+
+NO_CROP = np.zeros((CROP, CROP, 3), np.uint8)
+NO_CROP.flags.writeable = False
+
+
+def _copy(cell: CellRead) -> CellRead:
+    new = CellRead.__new__(CellRead)
+    new.__dict__.update(cell.__dict__)
+    return new
 
 
 def _expected_lab(profile: Profile) -> np.ndarray:
@@ -101,6 +118,20 @@ def cell_sample(img: np.ndarray, grid: Grid, r: int, c: int):
     feat = patch_features(to_lab(patch))
     inner = crop(img, grid.cell_rect(r, c, inset=0.06))
     return feat, cv2.resize(inner, (CROP, CROP), interpolation=cv2.INTER_AREA)
+
+
+def ring_colors(crops: list[np.ndarray]) -> np.ndarray:
+    """cell_sample(...)[0][:3] of every cell crop, converted and measured together."""
+    patches = np.empty((len(crops) * PATCH, PATCH, 3), np.uint8)
+    for i, cell in enumerate(crops):
+        cv2.resize(
+            cell,
+            (PATCH, PATCH),
+            dst=patches[i * PATCH : (i + 1) * PATCH],
+            interpolation=cv2.INTER_AREA,
+        )
+    lab = to_lab(patches).reshape(len(crops), PATCH, PATCH, 3)
+    return median_over(lab[:, RING], axis=1)
 
 
 def rack_zone(profile: Profile) -> tuple[float, float, float, float]:
@@ -134,12 +165,13 @@ def find_rack(
     view: BoardView | None = None,
     expected: np.ndarray | None = None,
     band: tuple[int, int, int, int] | None = None,
+    memo: dict | None = None,
 ) -> list[Blob]:
     """The row of rack tiles: same-sized tile-colored squares, side by side, in the rack zone."""
     H, W = img.shape[:2]
     x0, x1, y0, y1 = rack_zone(profile)
     band = band or (round(x0 * W), round(y0 * H), round(x1 * W), round(y1 * H))
-    blobs = find_tile_blobs(img, band, tile_lab, radius, (0.01 * H, 0.14 * H))
+    blobs = find_tile_blobs(img, band, tile_lab, radius, (0.01 * H, 0.14 * H), memo=memo)
     blobs = [b for b in blobs if not _on_board_square(b, view, expected, tile_lab)]
     if not blobs:
         return []
@@ -323,38 +355,47 @@ def has_star(crop_: np.ndarray) -> bool:
     return float(violet.mean()) >= STAR_FRACTION
 
 
-def _corner_covered(crop_: np.ndarray, feat: np.ndarray) -> bool:
+def _corner_covered(crop_: np.ndarray, feat: np.ndarray, lab: np.ndarray | None = None) -> bool:
     """Part of the square is hidden under something of another color (a panel corner)."""
     size = crop_.shape[0]
-    a, b = round(size * 0.14), round(size * 0.4)
-    lab = to_lab(crop_)
+    if lab is None:
+        lab = to_lab(crop_)
     ring = feat[:3]
-    corners = []
-    for ys, xs in (
-        (slice(a, b), slice(a, b)),
-        (slice(a, b), slice(size - b, size - a)),
-        (slice(size - b, size - a), slice(a, b)),
-        (slice(size - b, size - a), slice(size - b, size - a)),
-    ):
-        corners.append(np.median(lab[ys, xs].reshape(-1, 3), axis=0))
-    if any(float(np.linalg.norm(k - ring)) > CORNER_COVERED for k in corners):
-        return True
+    a, b = round(size * 0.14), round(size * 0.4)
+    spots = (
+        lab[a:b, a:b],
+        lab[a:b, size - b : size - a],
+        lab[size - b : size - a, a:b],
+        lab[size - b : size - a, size - b : size - a],
+    )
+    corners = median_over(np.stack([s.reshape(-1, 3) for s in spots]), axis=1)
     # a panel edge across the square leaves a band of its color along one side
     a, b, m = round(size * 0.06), round(size * 0.14), round(size * 0.25)
-    for strip in (
+    strips = (
         lab[a:b, m : size - m],
         lab[size - b : size - a, m : size - m],
         lab[m : size - m, a:b],
         lab[m : size - m, size - b : size - a],
-    ):
-        if float(np.linalg.norm(np.median(strip.reshape(-1, 3), axis=0) - ring)) > EDGE_COVERED:
-            return True
-    # the ring mixes both colors when a panel hides half the square; corners do not
-    return any(
-        float(np.linalg.norm(corners[i] - corners[j])) > CORNER_COVERED
-        for i in range(4)
-        for j in range(i + 1, 4)
     )
+    edges = median_over(np.stack([s.reshape(-1, 3) for s in strips]), axis=1)
+    # the ring mixes both colors when a panel hides half the square; corners do not
+    pairs = [corners[i] - corners[j] for i in range(4) for j in range(i + 1, 4)]
+    vecs = np.concatenate([corners - ring, edges - ring, pairs])
+    limits = np.repeat([CORNER_COVERED, EDGE_COVERED, CORNER_COVERED], [4, 4, 6])
+    norms = np.sqrt(np.add.reduce(vecs * vecs, axis=1))
+    over = norms > limits
+    for i in np.flatnonzero(np.abs(norms - limits) <= 1e-4 * limits):
+        # the norm of a 3-vector is a dot product; measure the ones near the limit that way
+        over[i] = float(np.linalg.norm(np.array(vecs[i]))) > limits[i]
+    return bool(over.any())
+
+
+def _flat(crop_: np.ndarray) -> bool:
+    """crop_.std() < 6, decided by a cheap estimate unless that lies close to 6."""
+    spread = float(cv2.meanStdDev(crop_.reshape(-1, 1))[1][0, 0])
+    if abs(spread - 6.0) > 1e-3:
+        return spread < 6.0
+    return float(crop_.std()) < 6
 
 
 def _off_line(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
@@ -367,18 +408,78 @@ def _off_line(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
 
 def _covered_by(grid, rows: int, cols: int, rects) -> np.ndarray:
     """Squares under the rack, which floats on top of the board in zoomed views."""
-    out = np.zeros((rows, cols), bool)
     if not rects:
-        return out
+        return np.zeros((rows, cols), bool)
     xs = [x for x, _, w, _ in rects] + [x + w for x, _, w, _ in rects]
     ys = [y for _, y, _, h in rects] + [y + h for _, y, _, h in rects]
     pad = 0.25 * float(np.median([h for *_, h in rects]))
     x0, x1, y0, y1 = min(xs) - pad, max(xs) + pad, min(ys) - pad, max(ys) + pad
-    for r in range(rows):
-        for c in range(cols):
-            x, y, w, h = grid.cell_rect(r, c)
-            out[r, c] = x < x1 and x0 < x + w and y < y1 and y0 < y + h
-    return out
+    xs_, ys_, w, h = grid.axes(rows, cols)
+    cx, cy = np.array(xs_), np.array(ys_)
+    across = (cx < x1) & (x0 < cx + w)
+    down = (cy < y1) & (y0 < cy + h)
+    return down[:, None] & across[None, :]
+
+
+class ObstructionMap:
+    """Where on the screen something other than the game keeps lying over the board.
+
+    The game's own panels and buttons stay where they are while the board moves under them, and
+    other windows (Discord's own interface, another app) lie over everything. Squares that were
+    taken for foreign again and again are remembered in screen coordinates, so they are skipped
+    at once, are not learned from, and are forgotten again soon after the thing moves away."""
+
+    def __init__(self) -> None:
+        cols, rows = OBSTRUCTION_GRID
+        self.heat = np.zeros((rows, cols), np.float32)
+
+    def _slice(self, rect, size):
+        cols, rows = OBSTRUCTION_GRID
+        x, y, w, h = rect
+        fw, fh = size
+        x0, x1 = int(max(0, x) * cols / fw), int(np.ceil(min(fw, x + w) * cols / fw))
+        y0, y1 = int(max(0, y) * rows / fh), int(np.ceil(min(fh, y + h) * rows / fh))
+        return slice(y0, max(y0 + 1, y1)), slice(x0, max(x0 + 1, x1))
+
+    def decay(self) -> None:
+        self.heat *= OBSTRUCTION_DECAY
+
+    def mark(self, rect, size) -> None:
+        ys, xs = self._slice(rect, size)
+        self.heat[ys, xs] = np.minimum(OBSTRUCTION_MAX, self.heat[ys, xs] + 1.0)
+
+    def active(self) -> bool:
+        return bool(self.heat.max() >= OBSTRUCTION_HEAT)
+
+    @staticmethod
+    def spans(xs, ys, w: int, h: int, size) -> tuple:
+        """The heat cells that squares at columns xs and rows ys, each w by h, cover."""
+        cols, rows = OBSTRUCTION_GRID
+
+        def span(starts, length: int, full: int, n: int):
+            a = np.asarray(starts)
+            lo = (np.maximum(0, a) * n / full).astype(np.int64)
+            hi = np.ceil(np.minimum(full, a + length) * n / full).astype(np.int64)
+            return np.minimum(lo, n), np.minimum(np.maximum(lo + 1, hi), n)
+
+        x_lo, x_hi = span(xs, w, size[0], cols)
+        y_lo, y_hi = span(ys, h, size[1], rows)
+        return y_lo[:, None], y_hi[:, None], x_lo[None, :], x_hi[None, :]
+
+    def blocked_map(self, spans: tuple) -> np.ndarray:
+        """blocked() of every square at once."""
+        cols, rows = OBSTRUCTION_GRID
+        top, bottom, left, right = spans
+        sums = np.zeros((rows + 1, cols + 1), np.int64)
+        sums[1:, 1:] = (self.heat >= OBSTRUCTION_HEAT).cumsum(axis=0).cumsum(axis=1)
+        hot = sums[bottom, right] - sums[top, right] - sums[bottom, left] + sums[top, left]
+        area = (bottom - top) * (right - left)
+        return (area > 0) & (hot / np.maximum(area, 1) >= 0.6)
+
+    def blocked(self, rect, size) -> bool:
+        ys, xs = self._slice(rect, size)
+        area = self.heat[ys, xs]
+        return bool(area.size) and float((area >= OBSTRUCTION_HEAT).mean()) >= 0.6
 
 
 class ViewReader:
@@ -402,6 +503,8 @@ class ViewReader:
             else calibration.rack_proto.mean[:3]
         )
         self.locates = 0
+        self.obstructions = ObstructionMap()
+        self.sanitized = self.cal.sanitize()
         self._extent_at = 0.0
         self.hint = BoardHint()
         self.starts = {tuple(sq) for sq in profile.start_squares}
@@ -409,6 +512,8 @@ class ViewReader:
         self._rack_band: tuple[int, int, int, int] | None = None
         self._rack_count = 0
         self._rack_locates = -1
+        self._blob_memo: dict = {}
+        self._rings: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
         self._cache_rev: tuple | None = None
         self.values = ValueVotes()
         self.stamp_memory: dict[tuple[int, int, str], int] = {}
@@ -418,6 +523,28 @@ class ViewReader:
         self.rack_fixes: list[tuple[np.ndarray, str]] = []
         self.rack_memory: list[tuple[np.ndarray, str]] = []
 
+    def _ring_colors(self, img: np.ndarray, grid: Grid, cells: list[tuple[int, int]]):
+        """Ring colors of cells; a square that looks as it did at the last call keeps its color."""
+        kept: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
+        rings = [None] * len(cells)
+        crops, missing = [], []
+        for i, (r, c) in enumerate(cells):
+            cell = crop(img, grid.cell_rect(r, c))
+            seen = self._rings.get((r, c))
+            if seen is not None and seen[0].shape == cell.shape and np.array_equal(seen[0], cell):
+                rings[i] = seen[1]
+                kept[(r, c)] = seen
+            else:
+                crops.append(cell)
+                missing.append(i)
+        if missing:
+            measured = ring_colors(crops)
+            for k, i in enumerate(missing):
+                rings[i] = measured[k].copy()
+                kept[cells[i]] = (crops[k].copy(), rings[i])
+        self._rings = kept
+        return rings
+
     def _still_aligned(self, img: np.ndarray, view: BoardView) -> bool:
         if (img.shape[1], img.shape[0]) != getattr(self, "_size", None):
             return False
@@ -426,11 +553,11 @@ class ViewReader:
             return False
         rng = np.random.default_rng(len(rows))
         pick = rng.choice(len(rows), size=min(60, len(rows)), replace=False)
+        cells = [(int(rows[i]), int(cols[i])) for i in pick]
+        rings = self._ring_colors(img, view.grid, cells)
         ok = premium_seen = premium_ok = 0
-        for i in pick:
-            r, c = int(rows[i]), int(cols[i])
-            feat, _ = cell_sample(img, view.grid, r, c)
-            d = float(np.linalg.norm(feat[:3] - self.expected[r, c]))
+        for (r, c), ring in zip(cells, rings, strict=True):
+            d = float(np.linalg.norm(ring - self.expected[r, c]))
             ok += d < RING_OK
             if self.profile.premium_at(r, c) is not None:
                 premium_seen += 1
@@ -525,40 +652,58 @@ class ViewReader:
         covered = _covered_by(grid, rows, cols, [t.rect for t in rack if t.rect is not None])
         feats = np.zeros((rows, cols, 6), np.float32)
         crops: list = [None] * (rows * cols)
-        cells: list[list[CellRead]] = []
         self._new_colors: list[tuple[int, int, np.ndarray]] = []
         rev = self._revision()
         if rev != self._cache_rev:
             self._cache, self._cache_rev = {}, rev
         fresh: dict[int, tuple] = {}
-        for r in range(rows):
-            row = []
-            for c in range(cols):
-                if not view.visible[r, c] or covered[r, c]:
-                    row.append(CellRead(state=UNSEEN))
-                    continue
-                key = r * cols + c
-                raw = crop(board_img, board_grid.cell_rect(r, c)).copy()
-                hit = self._cache.get(key)
-                if hit is not None and hit[0].shape == raw.shape and np.array_equal(hit[0], raw):
-                    # the square shows exactly what it showed when it was last read
-                    _, feat, crop_, cell = hit
-                    cell = replace(cell)
-                else:
-                    feat, crop_ = cell_sample(board_img, board_grid, r, c)
-                    cell = self._read_cell(r, c, feat, crop_)
-                    if (
-                        cell.letter
-                        and not cell.blank
-                        and not cell.uncertain
-                        and cell.letter_score >= STAMP_LETTER_MIN
-                    ):
-                        cell.value = self._stamp(img, grid, r, c, cell.letter)
-                feats[r, c] = feat
-                crops[key] = crop_
-                fresh[key] = (raw, feat, crop_, replace(cell))
-                row.append(cell)
-            cells.append(row)
+        frame_size = (img.shape[1], img.shape[0])
+        guard = self.obstructions
+        guard.decay()
+        watching = guard.active()
+        unseen = CellRead(state=UNSEEN)
+        cells = [[_copy(unseen) for _ in range(cols)] for _ in range(rows)]
+        fxs, fys, fw, fh = grid.axes()
+        bxs, bys, bw, bh = board_grid.axes()
+        board_h, board_w = board_img.shape[:2]
+        spans = guard.spans(fxs, fys, fw, fh, frame_size)
+        blocked = guard.blocked_map(spans) if watching else None
+        live_rows, live_cols = np.nonzero(view.visible & ~covered)
+        for r, c in zip(live_rows.tolist(), live_cols.tolist(), strict=True):
+            key = r * cols + c
+            frame_rect = (fxs[c], fys[r], fw, fh)
+            if watching and blocked[r, c]:
+                cells[r][c] = CellRead(state=UNSEEN, foreign=True)
+                continue
+            x, y = bxs[c], bys[r]
+            if x >= 0 and y >= 0 and x + bw <= board_w and y + bh <= board_h:
+                raw = board_img[y : y + bh, x : x + bw]
+            else:
+                raw = crop(board_img, (x, y, bw, bh))
+            hit = self._cache.get(key)
+            if hit is not None and hit[0].shape == raw.shape and np.array_equal(hit[0], raw):
+                # the square shows exactly what it showed when it was last read
+                raw, feat, crop_, cell = hit
+                cell = _copy(cell)
+            else:
+                raw = raw.copy()
+                feat, crop_ = cell_sample(board_img, board_grid, r, c)
+                cell = self._read_cell(r, c, feat, crop_)
+                if (
+                    cell.letter
+                    and not cell.blank
+                    and not cell.uncertain
+                    and cell.letter_score >= STAMP_LETTER_MIN
+                ):
+                    cell.value = self._stamp(img, grid, r, c, cell.letter)
+            feats[r, c] = feat
+            crops[key] = crop_
+            fresh[key] = (raw, feat, crop_, _copy(cell))
+            if cell.foreign:
+                guard.mark(frame_rect, frame_size)
+                watching = guard.active()
+                blocked = guard.blocked_map(spans) if watching else None
+            cells[r][c] = cell
         self._cache = fresh
         if self._learn_new_colors():
             # read again the squares whose tile color was not known
@@ -569,7 +714,7 @@ class ViewReader:
         reading = Reading(cells, rack, grid, True, time.perf_counter() - t0, [])
         self._mark_start(reading, view, covered)
         reading.features = feats
-        reading.crops = [x if x is not None else np.zeros((CROP, CROP, 3), np.uint8) for x in crops]
+        reading.crops = [NO_CROP if x is None else x for x in crops]
         reading.view = view
         reading.rack_glyphs = rack_glyphs
         reading.base_values = self.known_values
@@ -651,15 +796,20 @@ class ViewReader:
     def _read_cell(self, r: int, c: int, feat: np.ndarray, crop_: np.ndarray) -> CellRead:
         ring_d = float(np.linalg.norm(feat[:3] - self.expected[r, c]))
         ring_ok = ring_d < RING_OK
+        if not ring_ok and not tile_like(feat[:3]):
+            # dark: Discord's dark theme, another window, the letterbox. Never a tile's color,
+            # whatever is written on it.
+            return CellRead(state=UNSEEN, foreign=True)
         if ring_ok and (r, c) in self.starts and has_star(crop_):
             # the square still has its own color and shows violet: the spinning star that
             # marks where the first word goes, never a letter
             return CellRead(star=True)
-        if ring_ok and float(crop_.std()) < 6:
+        if ring_ok and _flat(crop_):
             return CellRead()
-        if _corner_covered(crop_, feat):
+        lab = to_lab(crop_)
+        if _corner_covered(crop_, feat, lab):
             return CellRead(state=UNSEEN)
-        glyph = extract_glyph(crop_, feat, retry=not ring_ok)
+        glyph = extract_glyph(crop_, feat, retry=not ring_ok, lab=lab)
         key = self.keys[r][c]
         if glyph is None or glyph.ink_fraction < 0.012:
             return CellRead() if ring_ok else CellRead(state=UNSEEN)
@@ -699,7 +849,7 @@ class ViewReader:
         if not ring_ok and self._rack_look(feat) and float(glyph.ink[0]) > LIGHT_INK:
             # a rack tile's color with its light lettering is a rack tile or a button in the
             # game's interface (PASS TURN), never a tile that has been played on the board
-            return CellRead(state=UNSEEN)
+            return CellRead(state=UNSEEN, foreign=True)
         if not ring_ok and not self._tile_background(feat):
             # neither the square's color nor a known tile color: a tile in a new color (it
             # carries a point value) is asked about once; anything else covers the square
@@ -722,10 +872,10 @@ class ViewReader:
         """Look near where the rack was last seen first; search the whole zone when it moved."""
         args = (img, self.profile, self.rack_lab, radius, view, self.expected)
         if self._rack_band is not None and self._rack_locates == self.locates:
-            blobs = find_rack(*args, band=self._rack_band)
+            blobs = find_rack(*args, band=self._rack_band, memo=self._blob_memo)
             if len(blobs) == self._rack_count:
                 return blobs
-        blobs = find_rack(*args)
+        blobs = find_rack(*args, memo=self._blob_memo)
         if blobs:
             side = max(b.rect[2] for b in blobs)
             H, W = img.shape[:2]
@@ -827,11 +977,18 @@ class ViewReader:
         self.board_fixes.clear()
         self.stamp_memory.clear()
 
-    def consolidate(self, reading: Reading, per_letter: int = 3, confirmed: bool = False) -> int:
+    def consolidate(
+        self,
+        reading: Reading,
+        per_letter: int = 3,
+        confirmed: bool = False,
+        cells: set | None = None,
+    ) -> int:
         """Keep board shapes of letters from a fully confirmed reading.
 
         Board tiles are then matched against board tiles, which is stricter and more accurate
-        than matching them against rack or chart shapes. Only a few per letter are kept.
+        than matching them against rack or chart shapes. Only a few per letter are kept. With
+        cells, only those squares are learned from (the ones inside valid words).
         """
         if not (confirmed or reading.confident) or reading.crops is None:
             return 0
@@ -840,6 +997,8 @@ class ViewReader:
         for r, row in enumerate(reading.cells):
             for c, cell in enumerate(row):
                 if not cell.letter or cell.blank or cell.uncertain or cell.state == UNSEEN:
+                    continue
+                if cells is not None and (r, c) not in cells:
                     continue
                 if len(self.cal.templates.get(cell.letter, ())) >= per_letter:
                     continue

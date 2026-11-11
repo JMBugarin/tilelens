@@ -12,8 +12,41 @@ CROP = 48
 GLYPH = 24
 
 
+UNIT = np.arange(256, dtype=np.float32) / np.float32(255.0)
+
+
 def to_lab(bgr: np.ndarray) -> np.ndarray:
+    if bgr.dtype == np.uint8:
+        return cv2.cvtColor(cv2.LUT(bgr, UNIT), cv2.COLOR_BGR2Lab)
     return cv2.cvtColor(bgr.astype(np.float32) / 255.0, cv2.COLOR_BGR2Lab)
+
+
+def lab_distance(lab: np.ndarray, ref: np.ndarray) -> np.ndarray:
+    """np.linalg.norm(lab - ref[:3], axis=2): the same float32 operations in the same order."""
+    if lab.dtype != np.float32 or ref.dtype != np.float32:
+        return np.linalg.norm(lab - ref[None, None, :3], axis=2)
+    d = lab[:, :, 0] - ref[0]
+    d *= d
+    t = lab[:, :, 1] - ref[1]
+    t *= t
+    d += t
+    np.subtract(lab[:, :, 2], ref[2], out=t)
+    t *= t
+    d += t
+    return np.sqrt(d, out=d)
+
+
+def median_over(a: np.ndarray, axis: int = 0) -> np.ndarray:
+    """np.median(a, axis) for float arrays without NaN, without its Python overhead."""
+    n = a.shape[axis]
+    if n == 0:
+        return np.median(a, axis=axis)
+    half = n // 2
+    at = (slice(None),) * (axis % a.ndim)
+    if n % 2:
+        return np.partition(a, half, axis=axis)[(*at, half)]
+    part = np.partition(a, [half - 1, half], axis=axis)
+    return (part[(*at, half - 1)] + part[(*at, half)]) / 2
 
 
 def _band(lo: float, hi: float, size: int = PATCH) -> np.ndarray:
@@ -24,6 +57,8 @@ def _band(lo: float, hi: float, size: int = PATCH) -> np.ndarray:
 
 RING = _band(0.10, 0.24)
 OUTER = _band(0.02, 0.09)
+RING_AT = np.flatnonzero(RING.ravel())
+OUTER_AT = np.flatnonzero(OUTER.ravel())
 
 
 def crop(img: np.ndarray, rect: tuple[int, int, int, int]) -> np.ndarray:
@@ -41,8 +76,9 @@ def crop(img: np.ndarray, rect: tuple[int, int, int, int]) -> np.ndarray:
 
 def patch_features(patch_lab: np.ndarray) -> np.ndarray:
     """6-vector: median Lab of the inner ring and of the outer band of a PATCH x PATCH cell."""
-    ring = np.median(patch_lab[RING], axis=0)
-    outer = np.median(patch_lab[OUTER], axis=0)
+    flat = patch_lab.reshape(-1, 3)
+    ring = median_over(np.take(flat, RING_AT, axis=0))
+    outer = median_over(np.take(flat, OUTER_AT, axis=0))
     return np.concatenate([ring, outer]).astype(np.float32)
 
 
@@ -124,6 +160,7 @@ def extract_glyph(
     background_lab: np.ndarray,
     thr_scale: float | None = None,
     retry: bool = False,
+    lab: np.ndarray | None = None,
 ) -> Glyph | None:
     """Separate the letter from the tile background, dropping a corner point-value mark.
 
@@ -131,8 +168,9 @@ def extract_glyph(
     fainter point value that touches the letter falls away from it; retry does that on its own
     when the outline reaches the edge (for tiles, not for printed square labels)."""
     size = crop_bgr.shape[0]
-    lab = to_lab(crop_bgr)
-    dist = np.linalg.norm(lab - background_lab[None, None, :3], axis=2)
+    if lab is None:
+        lab = to_lab(crop_bgr)
+    dist = lab_distance(lab, background_lab)
     raw_dist = dist.copy()
     margin = max(1, round(size * 0.08))
     dist[:margin] = 0
@@ -235,7 +273,7 @@ def extract_glyph(
     if touches and thr_scale is None and retry:
         # a gray point value that joins the black letter pulls its outline to the edge
         for scale in (0.55, 0.7):
-            again = extract_glyph(crop_bgr, background_lab, scale)
+            again = extract_glyph(crop_bgr, background_lab, scale, lab=lab)
             if again is not None and not again.touches_edge:
                 return again
     vec = mask_to_vec(letter)
@@ -243,12 +281,12 @@ def extract_glyph(
         return None
     strongest = dist[letter]
     cut = np.percentile(strongest, 70)
-    ink = np.median(lab[letter & (dist >= cut)], axis=0)
+    ink = median_over(lab[letter & (dist >= cut)])
     value_ink = None
     if value_pixels.sum() >= 3:
         strongest_v = raw_dist[value_pixels]
         cut_v = np.percentile(strongest_v, 60)
-        value_ink = np.median(lab[value_pixels & (raw_dist >= cut_v)], axis=0).astype(np.float32)
+        value_ink = median_over(lab[value_pixels & (raw_dist >= cut_v)]).astype(np.float32)
     return Glyph(
         vec,
         ink.astype(np.float32),
@@ -267,6 +305,37 @@ class Blob:
     ring: np.ndarray
 
 
+STRIP = 64
+MEMO_BANDS = 3
+
+
+def _near_mask(region: np.ndarray, tile_lab: np.ndarray, radius: float, entry: dict | None):
+    """The pixels within radius of tile_lab, and whether any pixel differs from the last call.
+
+    With an entry (kept by the caller between calls), only the strips of rows that changed
+    since then are measured again; a pixel's color distance depends on that pixel alone."""
+
+    def measure(part: np.ndarray) -> np.ndarray:
+        return (lab_distance(to_lab(part), tile_lab) < radius).astype(np.uint8)
+
+    if entry is None:
+        return measure(region), True
+    key = (region.shape, tile_lab.tobytes(), radius)
+    if entry.get("key") != key:
+        entry.clear()
+        entry.update(key=key, region=region.copy(), near=measure(region))
+        return entry["near"], True
+    seen, near = entry["region"], entry["near"]
+    changed = False
+    for a in range(0, region.shape[0], STRIP):
+        rows = slice(a, a + STRIP)
+        if not np.array_equal(region[rows], seen[rows]):
+            seen[rows] = region[rows]
+            near[rows] = measure(region[rows])
+            changed = True
+    return near, changed
+
+
 def find_tile_blobs(
     img: np.ndarray,
     band: tuple[int, int, int, int],
@@ -274,16 +343,29 @@ def find_tile_blobs(
     radius: float,
     size_range: tuple[float, float],
     native: float | None = None,
+    memo: dict | None = None,
 ) -> list[Blob]:
-    """Tile-colored squares inside `band` (x0, y0, x1, y1), left to right."""
+    """Tile-colored squares inside `band` (x0, y0, x1, y1), left to right.
+
+    memo is a dict the caller keeps between calls on frames of one source: what is unchanged
+    in the band since the last call is not measured again."""
     x0, y0, x1, y1 = band
     H, W = img.shape[:2]
     x0, y0, x1, y1 = max(0, x0), max(0, y0), min(W, x1), min(H, y1)
     if x1 <= x0 or y1 <= y0:
         return []
     region = img[y0:y1, x0:x1]
-    lab = to_lab(region)
-    near = (np.linalg.norm(lab - tile_lab[None, None, :3], axis=2) < radius).astype(np.uint8)
+    entry = None
+    if memo is not None:
+        where = (x0, y0, x1, y1)
+        entry = memo.pop(where, {})
+        memo[where] = entry
+        while len(memo) > MEMO_BANDS:
+            memo.pop(next(iter(memo)))
+    near, changed = _near_mask(region, tile_lab, radius, entry)
+    args = (size_range, native)
+    if entry is not None and not changed and entry.get("args") == args:
+        return [Blob(b.rect, b.crop.copy(), b.ring.copy()) for b in entry["blobs"]]
     near = cv2.morphologyEx(near, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     n, labels, stats, _ = cv2.connectedComponentsWithStats(near, connectivity=4)
     lo, hi = size_range
@@ -308,6 +390,9 @@ def find_tile_blobs(
             Blob(rect, cv2.resize(inner, (CROP, CROP), interpolation=cv2.INTER_AREA), ring)
         )
     blobs.sort(key=lambda b: b.rect[0])
+    if entry is not None:
+        entry["args"] = args
+        entry["blobs"] = [Blob(b.rect, b.crop.copy(), b.ring.copy()) for b in blobs]
     return blobs
 
 
@@ -315,7 +400,7 @@ def corner_mark_ink(crop_bgr: np.ndarray, background_lab: np.ndarray) -> np.ndar
     """Color of a point-value mark in either right-hand corner, if there is one."""
     size = crop_bgr.shape[0]
     lab = to_lab(crop_bgr)
-    dist = np.linalg.norm(lab - background_lab[None, None, :3], axis=2)
+    dist = lab_distance(lab, background_lab)
     zone = np.zeros(dist.shape, bool)
     x0, x1 = round(size * 0.6), round(size * 0.94)
     zone[round(size * 0.06) : round(size * 0.42), x0:x1] = True
@@ -323,4 +408,4 @@ def corner_mark_ink(crop_bgr: np.ndarray, background_lab: np.ndarray) -> np.ndar
     marked = zone & (dist > 20)
     if marked.sum() < 3:
         return None
-    return np.median(lab[marked], axis=0).astype(np.float32)
+    return median_over(lab[marked]).astype(np.float32)

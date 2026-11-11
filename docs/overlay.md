@@ -1,77 +1,113 @@
-# Control panel and overlay
+# Panel, overlay and windows
 
-## Control panel
+The look is described in [design-system.md](design-system.md). This page says what each window
+shows and does while a game is on.
 
-- **Status:** Tracking, Aligning, Reading rack, Calculating, Holding, Check one tile, Board
-  obscured, Paused or Setup, with one line saying what to do when something needs you. The
-  panel shows how old the result is; the settings window shows how long the search and the
-  last read took.
-- **Up to three cards:** the word, total, starting row and column, direction, tiles placed,
-  any blank assignments, cross words and the per-word score breakdown. The header says
-  "Highest scoring" only when the search finished, and "Best found so far" otherwise. Clicking
-  a card previews that placement and **holds** it: nothing is recomputed while you place the
-  tiles, and tracking resumes by itself when your rack refills. Click the card again, or
+## Results panel
+
+A small pane of glass floats beside the board. It never takes focus, so the game keeps the
+keyboard. It is placed on the side of the board and rack with the most free room (right, left,
+below, above), keeps that side unless another is clearly better so it does not hop, and scales
+a little with the height of the game window. Drag it anywhere: the position is saved relative
+to the capture region, so it follows the game window. The overflow menu has **Move beside the
+board** once it was dragged, and **Compact view** (a single play with arrows) is remembered.
+
+- **Header:** the app mark, a status pill (Tracking, Aligning, Reading rack, Calculating,
+  Holding, Check tiles, Board obscured, Paused, Setup, No capture), pause, compact view and the
+  overflow menu. The menu holds Pause or Resume, Rescan, Check tiles, Calibrate, Settings and
+  the shortcuts.
+- **Three cards:** rank, word, total score, starting square with direction and tile count. The
+  selected card also shows the per-word breakdown, crossing words and blanks. A card click
+  previews that play on the board and **holds** it: nothing is recomputed while you place the
+  tiles, and tracking resumes by itself when your rack refills. Click the held card again, or
   press Resume tracking, to let go early.
-- **Unsure tile:** when a tile cannot be read with confidence the cards stay live and the panel
-  names the tile with its best candidates as letter buttons. One tap teaches TileLens that
-  tile.
-- **Buttons:** Select region, Calibrate, Pause/Resume, Rescan, Hide preview, Check tiles
-  (opens the correction grid), Profile and Word list (both reload live), and the overlay mode.
-- **Board preview:** a copy of the suggestion inside this window. It is the only preview in
-  `panel_only` mode.
-- **Hide preview** hides the ghost tiles; the board frame and rack outline stay.
+- **One banner at a time** for what needs you: an unsure tile, a partial view, a hold, a
+  calibration problem, or no Screen Recording permission. The action is a button on the banner.
+- **Unsure tile:** the cards stay live and the banner names the tile; its best candidates are
+  letter buttons under the cards. One tap teaches TileLens that tile.
+- **Before the game is learned,** a short checklist replaces the cards: allow screen capture,
+  choose a word list, open the game. Each row turns into a check mark and has one button.
+- **Footer:** how old the result is and the shortcut hint.
 
-Shortcuts work while TileLens is focused and are set under `shortcuts` in the settings file
-(`~/Library/Application Support/tilelens/settings.json` on macOS):
+Nothing in the panel loops while a result is showing. Changes take at most 180 ms and are
+instant with **Reduce motion**. The status spinner only runs while a read or search has no result
+yet.
+
+## Overlay
+
+The overlay is a frameless, transparent, always-on-top window exactly over the capture region.
+It ignores all input (`WindowTransparentForInput` and transparent mouse events) and never
+sends any. Previewing a placement never clicks or places anything in the game. It stays
+visible when another app (the game) is clicked: macOS normally hides an app's tool windows
+when the app is not frontmost, and TileLens turns that off.
+
+It draws only what the suggested play adds:
+
+- **Ghost tiles** for the selected play: smoked glass with a light rim, so they differ from
+  every tile and premium colour of the board, with the letter and its point value. A blank's
+  letter is marked. Tiles sit exactly on their squares at any window size, display scale or
+  zoom, because the squares come from the grid found in the newest frame.
+- **A soft bar** under the letters already on the board that the word runs through.
+- **One score tag** beside the play: `+34 pts`, and `2 of 3` when there is a choice. It keeps
+  off the game's own tiles when it can.
+- **Guides** (board corner brackets, the rack outline and a short label) flash for 180 ms when
+  the lock changes (the board was found again, moved or resized, the rack was read) and fade
+  out after 1.4 s. They stay only while something needs attention: a partial view, a view being
+  tracked from memory, or a rack that is not fully read. The **Alignment guides** setting is
+  Automatic, Always or Off.
+- **One soft amber ring** around the tile the panel is asking about.
+
+Tiles that were read are never highlighted, in any colour. The overlay does not mark what
+was recognized.
+
+Hiding the suggestions (the **Show suggestions on the board** switch, or Ctrl+Shift+H) removes
+the ghost tiles and the tag and leaves the guides to the setting above.
+
+## Settings window
+
+A sheet of glass that takes focus, opened from the tray, the panel menu or the first run. The
+first run shows the checklist (screen capture, word list, game area, learning the game) and
+**Show all settings** skips it. After that it has Status, Preview, Overlay (capture mode,
+guides, suggestions, compact panel, panel position), Appearance (Auto, Light or Dark, Reduce
+motion), Game (profile, word list, region), Shortcuts, Calibration and Diagnostics. Settings
+apply at once and are saved on every change. Confirmations such as "Region saved" or "Word list
+changed" appear as short toasts under the panel; anything that has to stay until it is dealt
+with is a banner.
+
+Shortcuts work while a TileLens window is in front. The panel does not take focus, so while the
+game is in front the cards are chosen by clicking. System-wide hotkeys are not implemented; on
+macOS they need the Accessibility permission.
 
 | Action | Default |
 | --- | --- |
 | Pause or resume | Ctrl+Shift+P |
 | Rescan | Ctrl+Shift+R |
-| Hide preview | Ctrl+Shift+H |
-| Next card | Ctrl+Shift+N |
+| Hide suggestions | Ctrl+Shift+H |
+| Next play | Ctrl+Shift+N |
+| Choose play 1, 2 or 3 | Ctrl+Shift+1, 2, 3 |
 | Check tiles | Ctrl+Shift+C |
 | Recalibrate | Ctrl+Shift+K |
 
-System-wide hotkeys are not implemented; on macOS they need the Accessibility permission.
+## Dialogs
 
-## Overlay
+Calibration, automatic calibration, check tiles and the region selector use the same sheet,
+header, buttons and inputs. The check dialog lists only the squares that are unclear, with the
+guess highlighted and the other candidates as keys, and the rack. Apply is enabled once every
+square without a guess has an answer. The calibration pictures outline the board once and
+number the rack tiles; they mark no individual square.
 
-The overlay is a frameless, transparent, always-on-top window covering the capture region.
-It ignores all input (`WindowTransparentForInput` and transparent mouse events) and never
-sends any. Like the glass panel, it stays visible when another app (the game) is clicked:
-macOS normally hides an app's tool windows when the app is not frontmost, and TileLens turns
-that off for both. Previewing a placement never clicks or places anything in the game.
+## Windows that float over the game
 
-It draws in a glass style:
-
-- **Board frame.** Cyan corner brackets around the squares in view, with a "Board aligned"
-  label when the whole board is in view. In a partial view the frame is a dashed amber outline
-  labelled "Partial view · tracking" (every square known), "Partial view · zoom out to
-  check" (squares are out of view, so the result is only the best among the squares in view)
-  or "Whole board in view · some squares behind game panels" (the game's own timer or rack
-  covers a few squares, and plays avoid them).
-- **Ghost tiles** for the selected play only: dashed cyan outlines on dark glass with the
-  letter and its point value and a "+N pts" label above. Letters already on
-  the board that are part of the word get a cyan ring. A blank's letter is drawn in cyan.
-- **Rack outline.** Green with "Rack confirmed · 7/7" when every rack tile was read, amber with
-  how many were read otherwise.
-
-## Glass panel
-
-A translucent results panel floats over the game, by default at the right edge of the capture
-region; drag it anywhere. It shows the three best plays (rank, word, points, starting square
-such as H8 and direction, word points versus crossing-word points, blanks), Pause, Rescan,
-Check tiles when something needs checking, how fresh the result is, and a legend. Clicking a
-card previews and holds that play on the board. Calibrate re-learns the game from the screen
-without typing anything; only when tiles cannot be read does it open a dialog, with the best
-guess filled in. The ⚙ button opens the settings window. The panel, the overlay and the dialogs
-are all shown over a full-screen game: macOS keeps ordinary Qt tool windows out of other apps'
-full-screen Spaces, so TileLens gives its windows the non-activating panel style that lets
-them in. The screenshot used to learn never includes TileLens itself. Unlike the overlay it takes clicks, and like the overlay
-it is kept out of screen capture in `exclude` mode. If it is captured anyway, it covers squares
-the way any game panel does: they are read as unseen, never as tiles. The panel is hidden in
-`panel_only` mode.
+Every window TileLens owns (panel and its menu, overlay, settings sheet, dialogs, toasts) is
+given a native blur behind the glass where the platform has one (`NSVisualEffectView` on
+macOS, acrylic on Windows) and a more opaque body where it does not. On each show the session
+puts the window over other apps' full-screen Spaces on every Space and, in `exclude` mode,
+out of screen capture, before the blur is requested; the three are independent and are checked
+together in `tests/test_session_wiring.py` on real Cocoa windows. Light or dark and the fill
+strength follow the brightness and detail of the game behind the panel, sampled from the newest
+frame at most once a second; when the panel sits outside the captured region the system
+appearance is kept. macOS keeps ordinary Qt tool windows out of other apps' full-screen Spaces,
+so the windows get the non-activating panel style that lets them in.
 
 Positions come from the grid found in the latest frame, scaled from captured pixels to
 screen points. Retina capture is twice the point size, and the transform is recomputed when
@@ -83,11 +119,11 @@ On macOS every capture is built from the windows of other apps only, so the over
 panel, the control window and any open dialog are never in a capture, whatever the window's
 sharing setting does on a given macOS version. The modes below remain as a second layer.
 
-| Mode | How | Cost |
+| Mode (setting) | How | Cost |
 | --- | --- | --- |
-| `exclude` (default) | Sets the macOS window sharing type to none through pyobjc so screen captures skip the overlay. | None. If setting it fails, TileLens switches to `suppress` and says so. |
-| `suppress` | Sets the overlay's opacity to zero for the moment of each capture. | Per capture, the overlay was hidden for under 50 ms in tests. Visible flicker on a real screen has not been measured. |
-| `panel_only` | No overlay; the preview is only in the panel. | None |
+| `exclude` (default, "Hidden from capture") | Sets the macOS window sharing type to none through pyobjc so screen captures skip the overlay. | None. If setting it fails, TileLens switches to `suppress` and says so. |
+| `suppress` ("Hide while capturing") | Sets the overlay's opacity to zero for the moment of each capture. | Per capture, the overlay was hidden for under 50 ms in tests. Visible flicker on a real screen has not been measured. |
+| `panel_only` ("Panel only") | No overlay; the panel is the only interface and shows no board preview. | None |
 
 Tested:
 
@@ -106,3 +142,11 @@ Not verified:
   hidden was measured.
 
 See the manual checklist in `docs/manual-verification.md`.
+
+## Windows over the board
+
+Other windows (the Discord frame, the game's own panels, TileLens's panel when it is not excluded
+from capture) are never read as tiles. Dark colors are not tile colors, a square that keeps
+reading as something other than a tile is remembered as an obstruction and skipped, and only
+letters that form valid words are learned into the calibration. A calibration poisoned by an
+earlier version is cleaned on load.
