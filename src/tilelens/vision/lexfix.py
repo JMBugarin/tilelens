@@ -155,6 +155,19 @@ def settle(reading: Reading, lexicon: Lexicon) -> LexResult:
     return result
 
 
+def valid_word_cells(reading: Reading, lexicon: Lexicon) -> set[tuple[int, int]]:
+    """Squares that belong to a whole word found in the word list.
+
+    Only these are trustworthy enough to learn from: letters that make words with their
+    neighbours are real tiles, whereas text from another window can look like anything."""
+    letters, blocked = _grid(reading)
+    out: set[tuple[int, int]] = set()
+    for cells, complete in _runs(letters, blocked):
+        if complete and "".join(letters[r][c] for r, c in cells) in lexicon:
+            out.update(cells)
+    return out
+
+
 def drop_isolated(reading: Reading) -> list[tuple[int, int]]:
     """Remove a lone tile with nothing beside it on every side: tiles always join the others,
     so a tile that does not belongs to the game's interface (an avatar, a label)."""
@@ -183,4 +196,4 @@ def drop_isolated(reading: Reading) -> list[tuple[int, int]]:
     return dropped
 
 
-__all__ = ["LexResult", "drop_isolated", "settle"]
+__all__ = ["LexResult", "drop_isolated", "settle", "valid_word_cells"]
