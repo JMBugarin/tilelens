@@ -170,7 +170,7 @@ def learned_values(path: Path) -> dict[str, int]:
     try:
         data = json.loads(learned_path(path).read_text(encoding="utf-8"))
         return {str(k): int(v) for k, v in data.get("values", {}).items()}
-    except (OSError, ValueError, AttributeError):
+    except (OSError, ValueError, TypeError, AttributeError):
         return {}
 
 

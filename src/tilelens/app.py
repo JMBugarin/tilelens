@@ -169,11 +169,15 @@ def cmd_read(args) -> int:
     import cv2
 
     from tilelens.rules.board import rack_to_str
-    from tilelens.rules.profile import load_profile
+    from tilelens.rules.profile import ProfileError, load_profile
     from tilelens.vision.recognizer import Calibration, Recognizer
 
-    profile = load_profile(args.profile)
-    rec = Recognizer(Calibration.load(args.calibration), profile)
+    try:
+        profile = load_profile(args.profile)
+        rec = Recognizer(Calibration.load(args.calibration), profile)
+    except (ProfileError, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     img = cv2.imread(args.image)
     if img is None:
         print(f"error: cannot read image {args.image}", file=sys.stderr)
@@ -246,7 +250,10 @@ def cmd_check_screen(args) -> int:
     print(f"frame {frame.shape[1]}x{frame.shape[0]}")
     cal = None
     if settings.calibration and Path(settings.calibration).is_file():
-        cal = Calibration.load(settings.calibration)
+        try:
+            cal = Calibration.load(settings.calibration)
+        except (OSError, ValueError):
+            print("saved calibration could not be read; calibrating again")
     t0 = time.perf_counter()
     try:
         if cal is None or cal.profile_fingerprint != profile.fingerprint():

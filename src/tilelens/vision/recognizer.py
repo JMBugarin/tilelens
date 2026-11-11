@@ -169,7 +169,14 @@ class Calibration:
 
     @classmethod
     def from_json(cls, text: str) -> Calibration:
-        d = json.loads(text)
+        """Parse a saved calibration; anything damaged or of the wrong shape is a ValueError."""
+        try:
+            return cls._from_dict(json.loads(text))
+        except (KeyError, TypeError, AttributeError, IndexError, cv2.error) as exc:
+            raise ValueError(f"calibration data is damaged ({type(exc).__name__}: {exc})") from exc
+
+    @classmethod
+    def _from_dict(cls, d: dict) -> Calibration:
 
         def dec(s):
             buf = np.frombuffer(base64.b64decode(s), np.uint8)

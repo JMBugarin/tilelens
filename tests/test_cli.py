@@ -70,3 +70,24 @@ def test_self_play_produces_legal_turns():
         check_placement(board, t.rack, t.played, p, lexicon)
         board = board.with_tiles(t.played)
     assert len(full_bag(p)) == sum(p.distribution.values()) + p.blanks
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[]",
+        "null",
+        "{}",
+        '{"profile_fingerprint": "x", "image_size": null}',
+        "not json",
+    ],
+)
+def test_read_reports_a_damaged_calibration(tmp_path, capsys, text):
+    cal = tmp_path / "cal.json"
+    cal.write_text(text)
+    image = tmp_path / "shot.png"
+    image.write_bytes(b"")
+    profile = demo_profile_dir() / "demo_garden.toml"
+    args = ["read", "--profile", str(profile), "--calibration", str(cal), "--image", str(image)]
+    assert main(args) == 1
+    assert "error:" in capsys.readouterr().err

@@ -1,8 +1,11 @@
 from collections import Counter
 
+import pytest
+
 from tilelens.rules.board import Board
 from tilelens.rules.profile import (
     demo_profile_dir,
+    learned_path,
     learned_values,
     load_profile,
     save_learned_values,
@@ -38,3 +41,12 @@ def test_learned_values_ride_beside_the_profile(tmp_path):
     assert position_id(board, Counter("E"), base, "v") != position_id(
         board, Counter("E"), amended, "v"
     )
+
+
+@pytest.mark.parametrize(
+    "text", ['{"values": {"E": null}}', '{"values": {"E": [1]}}', "[]", "null"]
+)
+def test_learned_values_ignore_a_damaged_file(tmp_path, text):
+    path = tmp_path / "game.toml"
+    learned_path(path).write_text(text)
+    assert learned_values(path) == {}
