@@ -5,9 +5,9 @@
 
 **A real-time computer-vision and search system: it reads a tile board off your screen, finds every legal word placement, and previews the top three as ghost tiles, all locally, in milliseconds.**
 
-![TileLens over Discord's Letter League: confirmed rack, ghost tiles for the selected play and the top three placements](docs/images/discord-tracking.png)
+![TileLens over a live Letter League game in Discord: ghost tiles for the selected play and the top three placements in the glass panel](docs/images/discord-live.png)
 
-*The previous interface: the selected play previewed over the board and the top three plays ranked by points. The player's name is blurred. The interface has since been redesigned as translucent glass, described in [docs/design-system.md](docs/design-system.md); new captures follow.*
+*A live Letter League game: the selected play drawn as ghost tiles, the top three placements ranked by points in the glass panel. The player card is blurred.*
 
 > A side project for experimenting with computer vision and word search, not for competitive or ranked play (assistance tools can get accounts banned). It never clicks or places anything, and is not affiliated with any game or company.
 
@@ -16,7 +16,7 @@
 - **Fast exact search.** DAWG-based move generator finds every legal placement: **2.2 ms median** on mid-game 13x13 boards with a 204k-word list. Checked against an independent brute-force solver on 400 seeded positions per test run (5,000+ more in the slow suite).
 - **Vision that knows what it doesn't know.** 99.9-100% of squares read correctly on synthetic boards across five themes (one held out from all tuning), **zero silent errors**; uncertain tiles are flagged, never guessed. On real Discord captures: 14/14 letters and values at 100%, 75% and 50% scale, with no calibration (small sample, see [limits](docs/limits.md)).
 - **Real-time pipeline.** 10 Hz capture, change detection so unchanged frames cost 22-40 ms, a separate search process, and stale results never shown.
-- **Engineered like a product.** Strict lint and format checks, 235 test functions including GUI and randomized suites, CI on macOS and Ubuntu, reproducible `uv` lockfile, benchmarks with raw JSON committed.
+- **Engineered like a product.** Strict lint and format checks, 565 test functions including GUI and randomized suites, CI on macOS and Ubuntu, reproducible `uv` lockfile, benchmarks with raw JSON committed.
 - **Private.** No network requests, telemetry, accounts or cloud models. Frames stay in memory.
 
 **Stack:** Python · OpenCV · NumPy · PySide6 · PyObjC/Quartz · DAWG · multiprocessing · uv · pytest · ruff · GitHub Actions
