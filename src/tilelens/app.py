@@ -216,8 +216,8 @@ def cmd_check_screen(args) -> int:
 
     import cv2
 
-    from tilelens.rules.lexicon import lexicon_for
-    from tilelens.rules.profile import demo_profile_dir, load_profile
+    from tilelens.rules.lexicon import WordListError, lexicon_for
+    from tilelens.rules.profile import ProfileError, demo_profile_dir, load_profile
     from tilelens.state.controller import LiveController, Status
     from tilelens.state.worker import InlineSolver
     from tilelens.ui.settings import Settings
@@ -225,7 +225,11 @@ def cmd_check_screen(args) -> int:
     from tilelens.vision.recognizer import Calibration, CalibrationError
 
     settings = Settings.load()
-    profile = load_profile(args.profile or settings.profile or demo_profile_dir() / "x.toml")
+    try:
+        profile = load_profile(args.profile or settings.profile or demo_profile_dir() / "x.toml")
+    except (ProfileError, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     if profile.appearance is None:
         print("check-screen needs a profile with an [appearance] section", file=sys.stderr)
         return 1
@@ -285,7 +289,11 @@ def cmd_check_screen(args) -> int:
     print("rack:", " ".join(rack), f"({len(reading.rack)} tiles)")
     unsure = [(r, c) for r, c in reading.uncertain_cells]
     print(f"unclear squares: {len(unsure)}")
-    lexicon = lexicon_for(profile, settings.words)
+    try:
+        lexicon = lexicon_for(profile, settings.words)
+    except (WordListError, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     from tilelens.solver.movegen import MoveGenerator
 
     class Src:

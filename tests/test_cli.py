@@ -91,3 +91,13 @@ def test_read_reports_a_damaged_calibration(tmp_path, capsys, text):
     args = ["read", "--profile", str(profile), "--calibration", str(cal), "--image", str(image)]
     assert main(args) == 1
     assert "error:" in capsys.readouterr().err
+
+
+def test_check_screen_reports_an_unreadable_profile(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    bad = tmp_path / "bad.toml"
+    bad.write_text("this is [not toml")
+    image = tmp_path / "shot.png"
+    image.write_bytes(b"")
+    assert main(["check-screen", "--profile", str(bad), "--image", str(image)]) == 1
+    assert "error:" in capsys.readouterr().err
