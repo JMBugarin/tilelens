@@ -157,10 +157,10 @@ def cmd_calibrate(args) -> int:
             rows = [ln.strip() for ln in Path(board).read_text().splitlines() if ln.strip()]
             samples.append((img, rows, rack))
         cal = calibrate(samples, profile, board_hint=rect)
+        cal.save(args.out)
     except (ProfileError, CalibrationError, GridNotFound, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    cal.save(args.out)
     print(f"saved calibration with {len(cal.templates)} letters to {args.out}")
     return 0
 

@@ -101,3 +101,30 @@ def test_check_screen_reports_an_unreadable_profile(tmp_path, capsys, monkeypatc
     image.write_bytes(b"")
     assert main(["check-screen", "--profile", str(bad), "--image", str(image)]) == 1
     assert "error:" in capsys.readouterr().err
+
+
+def test_calibrate_reports_an_unwritable_output(tmp_path, capsys):
+    import cv2
+
+    from tilelens.synth.render import render
+    from tilelens.synth.scenes import random_scene
+    from tilelens.vision.evaluate import hint_from, truth_rack, truth_rows
+
+    img, labels = render(random_scene(1000, theme="meadow", cell=36))
+    image = tmp_path / "shot.png"
+    cv2.imwrite(str(image), img)
+    board = tmp_path / "board.txt"
+    board.write_text("\n".join(truth_rows(labels)))
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory")
+    args = [
+        "calibrate",
+        "--profile", str(demo_profile_dir() / "demo_garden.toml"),
+        "--image", str(image),
+        "--board", str(board),
+        "--rack", truth_rack(labels),
+        "--rect", ",".join(str(v) for v in hint_from(labels)),
+        "--out", str(blocker / "cal.json"),
+    ]  # fmt: skip
+    assert main(args) == 1
+    assert "error:" in capsys.readouterr().err
