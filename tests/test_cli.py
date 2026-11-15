@@ -49,6 +49,18 @@ def test_import_words(tmp_path, capsys):
     assert main(["import-words", str(tmp_path / "nope.txt")]) == 1
 
 
+@pytest.mark.parametrize("manifest", ["[1, 2]", '{"edition": "x"}'])
+def test_words_status_survives_a_malformed_manifest(tmp_path, capsys, manifest):
+    words = tmp_path / "w.txt"
+    words.write_text("CAT\nCATS\n")
+    words.with_suffix(".manifest.json").write_text(manifest)
+    base = (demo_profile_dir() / "demo_pocket.toml").read_text()
+    profile = tmp_path / "p.toml"
+    profile.write_text(base.replace("demo_words.txt", str(words).replace("\\", "/")))
+    assert main(["words", "--profile", str(profile), "status"]) == 0
+    assert "words in use" in capsys.readouterr().out
+
+
 def test_lexicon_for_requires_a_list():
     p = demo_profile()
     assert len(lexicon_for(p)) > 1000

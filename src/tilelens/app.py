@@ -384,9 +384,8 @@ def cmd_words(args) -> int:
         if manifest:
             print(f"  edition          {manifest.get('edition')} ({manifest.get('words')} words)")
             print(f"  source           {manifest.get('source')}")
-            print(
-                f"  installed        {manifest.get('installed')}  sha256 {manifest['sha256'][:16]}"
-            )
+            digest = str(manifest.get("sha256", "unknown"))[:16]
+            print(f"  installed        {manifest.get('installed')}  sha256 {digest}")
             print(f"  note             {manifest.get('note')}")
         else:
             print("  no manifest: where this list came from is not recorded")

@@ -54,9 +54,10 @@ def read_manifest(words_file: Path) -> dict:
     import json
 
     try:
-        return json.loads(manifest_path(words_file).read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path(words_file).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    return manifest if isinstance(manifest, dict) else {}
 
 
 def install_baseline(file: str | Path | None = None, name: str = "enable1") -> ImportReport:
