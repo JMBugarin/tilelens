@@ -127,6 +127,10 @@ def test_recording_needs_evidence_and_a_real_word(tmp_path):
         o.record("block", "U1U", "seen")
     with pytest.raises(OverrideError):
         o.record("maybe", "UMU", "seen")
+    for bad in ("notadate", "25/10/2026", "2026-13-01", ""):
+        with pytest.raises(OverrideError, match="YYYY-MM-DD"):
+            o.record("block", "UMU", "seen", bad)
+    assert o.status("UMU") is None
     o.record("block", "umu", "game said no", "2026-10-25")
     path = tmp_path / "x.overrides.json"
     o.save(path)

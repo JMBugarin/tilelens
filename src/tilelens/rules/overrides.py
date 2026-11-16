@@ -102,6 +102,11 @@ class Overrides:
                 "say what you saw (for example 'game rejected UMU played alone, row 8 across, "
                 "no other word formed')"
             )
+        if when is not None:
+            try:
+                when = date.fromisoformat(when.strip()).isoformat()
+            except ValueError:
+                raise OverrideError(f"'{when}' is not a date written as YYYY-MM-DD") from None
         other = "block" if kind == "allow" else "allow"
         getattr(self, other).pop(key, None)
         getattr(self, kind)[key] = {
