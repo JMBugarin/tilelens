@@ -41,6 +41,47 @@ def test_memory_tracks_until_the_board_can_change_out_of_view():
     assert merged == rows_board(["AX.", "BD.", "..C"])
 
 
+def test_memory_own_move_with_identical_refill_stays_partial():
+    mem = BoardMemory()
+    rack = Counter("XYZ")
+    mem.update(rows_board(["A..", "B..", "..."]), rack)
+    # the player plays X and draws X again, so the rack does not change
+    moved = rows_board(["AX#", "B.#", "###"])
+    assert mem.update(moved, rack) == (moved, Coverage.PARTIAL)
+    assert mem.update(rows_board(["##.", "#..", "..."]), rack)[1] == Coverage.PARTIAL
+    # an opponent may have played out of view: those squares stay unknown
+    assert mem.update(moved, rack) == (moved, Coverage.PARTIAL)
+
+
+def test_memory_own_blank_play_with_identical_refill_stays_partial():
+    mem = BoardMemory()
+    rack = Counter("XY?")
+    mem.update(rows_board(["A..", "B..", "..."]), rack)
+    moved = rows_board(["Ae#", "B.#", "###"])
+    assert mem.update(moved, rack) == (moved, Coverage.PARTIAL)
+    assert mem.update(rows_board(["##.", "#..", "..."]), rack)[1] == Coverage.PARTIAL
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        ["AD#", "B.#", "###"],  # a letter the rack does not hold
+        ["XX#", "B.#", "###"],  # an existing tile replaced
+        ["AX#", "BX#", "###"],  # more tiles than the rack holds
+    ],
+)
+def test_memory_change_the_rack_cannot_explain_opens_a_record(changed):
+    mem = BoardMemory()
+    rack = Counter("XYZ")
+    mem.update(rows_board(["A..", "B..", "..."]), rack)
+    seen = rows_board(changed)
+    assert mem.update(seen, rack) == (seen, Coverage.PARTIAL)
+    rest = rows_board(["##.", "##.", "..."])
+    merged, cov = mem.update(rest, rack)
+    assert cov == Coverage.TRACKING
+    assert not merged.has_unknown()
+
+
 def test_memory_accumulates_squares_hidden_by_the_rack():
     mem = BoardMemory()
     rack = Counter("XY")

@@ -2,8 +2,10 @@
 
 Squares seen in earlier views are kept only while nothing can have changed out of sight:
 
-- After the player's own move (the rack changed), the others move next, possibly where the view
-  does not reach. Out-of-view squares are unknown until a change by someone else is seen.
+- After the player's own move (the rack changed, or new tiles appeared that the unchanged rack
+  could have supplied, as when the player draws back the letters just played), the others move
+  next, possibly where the view does not reach. Out-of-view squares are unknown until a change
+  by someone else is seen.
 - A change in view that the player did not make starts a new record from that frame; panning
   and zooming then fill it in.
 
@@ -16,6 +18,7 @@ from collections import Counter
 from enum import StrEnum
 
 from tilelens.rules.board import Board
+from tilelens.rules.profile import BLANK
 
 
 class Coverage(StrEnum):
@@ -53,13 +56,15 @@ class BoardMemory:
             self.board, self.rack, self.open = seen, rack, True
         elif rack != self.rack:
             self.board, self.rack, self.open = seen, rack, False
-        elif any(
-            seen.cells[r][c] != mem.cells[r][c]
+        elif changed := [
+            (r, c)
             for r in range(seen.height)
             for c in range(seen.width)
-            if not seen.is_unknown(r, c) and not mem.is_unknown(r, c)
-        ):
-            self.board, self.open = seen, True
+            if not seen.is_unknown(r, c)
+            and not mem.is_unknown(r, c)
+            and seen.cells[r][c] != mem.cells[r][c]
+        ]:
+            self.board, self.open = seen, not self._own_play(mem, seen, changed)
         elif self.open:
             self.board = Board(
                 seen.width,
@@ -84,6 +89,16 @@ class BoardMemory:
         if self.open and not self.board.has_unknown():
             return self.board, Coverage.TRACKING
         return self.board, Coverage.PARTIAL
+
+    def _own_play(self, mem: Board, seen: Board, changed: list[tuple[int, int]]) -> bool:
+        """Every change is a new tile on an empty square, and the rack held them all."""
+        played = Counter()
+        for r, c in changed:
+            if mem.cells[r][c] is not None or seen.cells[r][c] is None:
+                return False
+            letter, blank = seen.cells[r][c]
+            played[BLANK if blank else letter] += 1
+        return not played - (self.rack or Counter())
 
 
 __all__ = ["COVERAGE_NOTES", "BoardMemory", "Coverage"]
