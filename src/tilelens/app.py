@@ -352,7 +352,7 @@ def cmd_words(args) -> int:
     try:
         if args.words_command == "install-baseline":
             report = install_baseline(args.file, args.name)
-            manifest = read_manifest(report.path)
+            manifest = report.manifest
             print(f"installed {report.words} words to {report.path}")
             print(f"edition {manifest['edition']}, sha256 {manifest['sha256'][:16]}...")
             print(manifest["note"])

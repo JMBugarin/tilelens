@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from tilelens.paths import words_dir
 from tilelens.rules.lexicon import Lexicon
@@ -16,6 +18,11 @@ class ImportReport:
     words: int
     skipped: int
     version: str
+
+
+@dataclass
+class BaselineReport(ImportReport):
+    manifest: dict
 
 
 def import_word_list(
@@ -60,7 +67,7 @@ def read_manifest(words_file: Path) -> dict:
     return manifest if isinstance(manifest, dict) else {}
 
 
-def install_baseline(file: str | Path | None = None, name: str = "enable1") -> ImportReport:
+def install_baseline(file: str | Path | None = None, name: str = "enable1") -> BaselineReport:
     """Install the baseline word list and a manifest saying where it came from.
 
     Without a file this downloads ENABLE from a pinned address and refuses it unless its hash
@@ -86,8 +93,7 @@ def install_baseline(file: str | Path | None = None, name: str = "enable1") -> I
         digest = hashlib.sha256(raw).hexdigest()
         source, note, edition = str(file), "Provided by the user; licence not checked.", name
     dest = dest_dir / f"{name}.txt"
-    dest.write_bytes(raw)
-    lexicon = Lexicon.load(dest)
+    lexicon = Lexicon.from_bytes(raw, Path(file).expanduser() if file is not None else dest)
     manifest = {
         "name": name,
         "edition": edition,
@@ -97,5 +103,47 @@ def install_baseline(file: str | Path | None = None, name: str = "enable1") -> I
         "words": len(lexicon),
         "note": note,
     }
-    manifest_path(dest).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    return ImportReport(dest, len(lexicon), lexicon.skipped, lexicon.version)
+    # Stage both files on the destination volume before publishing either one.
+    with TemporaryDirectory(dir=dest.parent) as staging:
+        stage = Path(staging)
+        candidate = stage / "words"
+        candidate.write_bytes(raw)
+        metadata = stage / "manifest"
+        metadata.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        _replace_baseline(dest, candidate, metadata)
+    return BaselineReport(dest, len(lexicon), lexicon.skipped, lexicon.version, manifest)
+
+
+def _replace_baseline(dest: Path, candidate: Path, metadata: Path) -> None:
+    # Serialize installers so the provenance and list belong to the same invocation.
+    from PySide6.QtCore import QLockFile
+
+    lock = QLockFile(str(dest) + ".lock")
+    if not lock.tryLock(0):
+        raise OSError(f"could not lock baseline for installation: {dest}")
+    try:
+        manifest = manifest_path(dest)
+        # Hide old provenance across the two renames. Even if the process stops here,
+        # status can at worst see no manifest for a complete word list.
+        previous_manifest = metadata.with_name("previous-manifest")
+        previous_words = candidate.with_name("previous-words")
+        if dest.is_file() or dest.is_symlink():
+            shutil.copy2(dest, previous_words, follow_symlinks=False)
+        if manifest.is_file() or manifest.is_symlink():
+            manifest.replace(previous_manifest)
+        try:
+            candidate.replace(dest)
+            try:
+                metadata.replace(manifest)
+            except OSError:
+                if previous_words.exists() or previous_words.is_symlink():
+                    previous_words.replace(dest)
+                else:
+                    dest.unlink()
+                raise
+        except OSError:
+            if previous_manifest.exists() or previous_manifest.is_symlink():
+                previous_manifest.replace(manifest)
+            raise
+    finally:
+        lock.unlock()
