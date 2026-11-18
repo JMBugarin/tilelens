@@ -5,6 +5,16 @@ from pathlib import Path
 from tilelens import __version__
 
 
+def _positive_int(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: {text!r}") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tilelens")
     parser.add_argument("--version", action="version", version=f"tilelens {__version__}")
@@ -22,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="file with one row per line: '.' empty, uppercase tile, lowercase blank",
     )
     solve.add_argument("--rack", required=True, help="rack letters, '?' for a blank")
-    solve.add_argument("--top", type=int, default=3)
+    solve.add_argument("--top", type=_positive_int, default=3)
 
     cal = sub.add_parser("calibrate", help="learn a game's look from screenshots you label")
     cal.add_argument("--profile", required=True)

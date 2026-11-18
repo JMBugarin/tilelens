@@ -36,6 +36,18 @@ def test_solve_cli_errors(tmp_path, capsys):
     assert main([*args, "--words", str(tmp_path / "missing.txt")]) == 1
 
 
+@pytest.mark.parametrize("top", ["0", "-1", "x"])
+def test_solve_rejects_a_non_positive_top(tmp_path, capsys, top):
+    board = tmp_path / "board.txt"
+    board.write_text("\n".join(["........."] * 9))
+    profile = demo_profile_dir() / "demo_pocket.toml"
+    args = ["solve", "--profile", str(profile), "--board", str(board), "--rack", "A", "--top", top]
+    with pytest.raises(SystemExit) as exc:
+        main(args)
+    assert exc.value.code == 2
+    assert "--top" in capsys.readouterr().err
+
+
 def test_import_words(tmp_path, capsys):
     src = tmp_path / "My List!.txt"
     src.write_text("cat\nCATS\n# note\nñu\nx\n")
