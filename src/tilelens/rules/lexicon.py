@@ -57,14 +57,20 @@ class Lexicon:
     def load(cls, path: str | Path, alphabet: Iterable[str] | None = None) -> Lexicon:
         path = Path(path).expanduser()
         try:
-            text = path.read_text(encoding="utf-8-sig")
+            raw = path.read_bytes()
         except FileNotFoundError:
             raise WordListError(f"word list not found: {path}") from None
-        except UnicodeDecodeError:
-            raise WordListError(f"word list is not UTF-8 text: {path}") from None
         except OSError as exc:
             # A folder or an unreadable file; callers such as the GUI only expect WordListError.
             raise WordListError(f"word list could not be read: {path} ({exc.strerror})") from None
+        return cls.from_bytes(raw, path, alphabet)
+
+    @classmethod
+    def from_bytes(cls, raw: bytes, path: Path, alphabet: Iterable[str] | None = None) -> Lexicon:
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise WordListError(f"word list is not UTF-8 text: {path}") from None
         lex = cls.from_words(text.splitlines(), alphabet, source=path)
         if not lex.words:
             raise WordListError(f"word list has no usable words: {path}")
